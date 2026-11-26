@@ -151,7 +151,7 @@ Then open <http://127.0.0.1:8000/dashboard>. The page updates as tasks and usage
 
 ## Implementation and contribution
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the code map, setup for development, local checks, security boundaries, and the implementation workflow. Architecture and issue-workflow decisions are documented in [`docs/specs/`](docs/specs/).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the code map, setup for development, local checks, security boundaries, and the implementation workflow. The [dashboard design](docs/specs/2026-11-26-dashboard-redesign.md) and [manual verification guide](docs/specs/2026-11-22-manual-verification.md) are in `docs/specs/`.
 
 ## Security
 

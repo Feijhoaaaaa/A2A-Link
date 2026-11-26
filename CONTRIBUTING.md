@@ -9,8 +9,7 @@ Thanks for helping improve A2A-Link. This guide explains how to set up a local d
 - `mcp_server/` — MCP tools, managed agent processes, issue coordination, worktree isolation, and terminal policy enforcement.
 - `config/` — safe-to-publish example policy and agent-profile configuration. Personal copies belong in `~/.a2a_link`, not in Git.
 - `tests/` — automated unit and integration coverage for the balancer and MCP server.
-- `docs/specs/` — design decisions and client verification records.
-- `docs/superpowers/plans/` — implementation plans and their acceptance checklists.
+- `docs/specs/` — user-facing design notes and manual verification guidance.
 
 ## Development setup
 
@@ -28,7 +27,7 @@ On Windows PowerShell, create the environment with `py -3.11 -m venv .venv` and 
 
 ## Implementation workflow
 
-1. Read the relevant design spec, implementation plan, and nearby code before editing.
+1. Read the relevant design notes and nearby code before editing.
 2. Record the current branch and `git status --short`; never overwrite or include unrelated user changes.
 3. For behavior changes, add or update a focused test that demonstrates the expected behavior, then run it and the full suite:
 
