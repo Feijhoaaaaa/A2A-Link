@@ -1,0 +1,29 @@
+{
+  "_note": "Copy outside the project and point A2A_LINK_PROFILE_CONFIG at it. Only model/effort pairs observed to work in M1 are listed. 'models' is the list of what is available: a configured profile that names anything else makes POST /profiles/resolve answer 422 instead of falling back. A user override is never checked against this list.",
+  "agents": {
+    "claude": {
+      "models": {
+        "claude-sonnet-5-5": ["low", "medium"],
+        "claude-opus-5-5": ["high"]
+      },
+      "default": {"model": "claude-sonnet-5-5", "effort": "medium"},
+      "task_types": {
+        "simple": {"model": "claude-sonnet-5-5", "effort": "low"},
+        "feature": {"model": "claude-sonnet-5-5", "effort": "medium"},
+        "design": {"model": "claude-opus-5-5", "effort": "high"}
+      }
+    },
+    "codex": {
+      "models": {
+        "gpt-6-luna": ["low"],
+        "gpt-6.2-sol": ["medium", "high"]
+      },
+      "default": {"model": "gpt-6.2-sol", "effort": "medium"},
+      "task_types": {
+        "simple": {"model": "gpt-6-luna", "effort": "low"},
+        "feature": {"model": "gpt-6.2-sol", "effort": "medium"},
+        "design": {"model": "gpt-6.2-sol", "effort": "high"}
+      }
+    }
+  }
+}
