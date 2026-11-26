@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+build/
+dist/
+.python-version.local
+
+# Test, lint, and coverage output
+.pytest_cache/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Local balancer state and logs
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.log
+
+# Local settings and credentials
+.env
+.env.*
+!.env.example
+terminal-policy.json
+terminal-audit.jsonl
+agent-profiles.json
+
+# Worktrees and generated agent state
+.worktrees/
+.playwright-mcp/
+.claude/launch.json
+.claude/settings.local.json
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
