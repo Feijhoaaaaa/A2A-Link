@@ -1,0 +1,41 @@
+{
+  "_comment": "Copy OUTSIDE allowed_roots (e.g. %USERPROFILE%/.a2a_link/terminal-policy.json; not %APPDATA%, which MSIX apps like Codex may redirect) and point A2A_LINK_POLICY at it. Levels: safe | confirm | deny. Anything not listed is denied.",
+  "allowed_roots": ["C:/path/to/your/project"],
+  "audit_log": "C:/Users/YOU/.a2a_link/terminal-audit.jsonl",
+  "default_timeout_s": 60,
+  "max_timeout_s": 600,
+  "max_output_bytes": 200000,
+  "env_set": { "GIT_TERMINAL_PROMPT": "0", "GIT_PAGER": "cat", "PAGER": "cat" },
+  "commands": {
+    "git": {
+      "default": "deny",
+      "deny_args": ["-c", "--config-env", "-C", "--git-dir", "--work-tree", "--exec-path", "--upload-pack", "--receive-pack"],
+      "confirm_args": ["--force", "-f", "--hard"],
+      "rules": [
+        { "prefix": ["status"], "level": "safe" },
+        { "prefix": ["diff"], "level": "safe" },
+        { "prefix": ["log"], "level": "safe" },
+        { "prefix": ["show"], "level": "safe" },
+        { "prefix": ["branch", "--list"], "level": "safe" },
+        { "prefix": ["add"], "level": "confirm" },
+        { "prefix": ["commit"], "level": "confirm" },
+        { "prefix": ["switch"], "level": "confirm" },
+        { "prefix": ["restore"], "level": "confirm" },
+        { "prefix": ["push"], "level": "deny" },
+        { "prefix": ["config"], "level": "deny" }
+      ]
+    },
+    "python": {
+      "default": "deny",
+      "rules": [
+        { "prefix": ["-m", "pytest"], "level": "safe" },
+        { "prefix": ["-m", "pip", "list"], "level": "safe" },
+        { "prefix": ["-m", "pip", "install"], "level": "confirm" }
+      ]
+    },
+    "node": {
+      "default": "deny",
+      "rules": [{ "prefix": ["--version"], "level": "safe" }]
+    }
+  }
+}
