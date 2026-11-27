@@ -42,6 +42,26 @@ def test_tools_are_registered(setup):
     names, _ = _call(build_server(str(path)), "describe_terminal_policy", {})
     assert {"delegate_to_claude", "delegate_to_codex", "run_command", "describe_terminal_policy"} <= names
     assert "replace_issue_generation" in names
+    assert "update_a2a_link" in names
+
+
+def test_update_a2a_link_tool_calls_shared_updater(setup, monkeypatch):
+    _, path, _ = setup
+    import mcp_server.server as server_module
+
+    expected = {"status": "updated", "from_version": "2.0.0", "to_version": "2.1.0",
+                "restart_required": True}
+    calls = []
+
+    def fake_update():
+        calls.append(True)
+        return expected
+
+    monkeypatch.setattr(server_module, "update_installation", fake_update)
+    _, response = _call(build_server(str(path)), "update_a2a_link", {})
+
+    assert _payload(response) == expected
+    assert calls == [True]
 
 
 def test_replace_issue_generation_tool_forwards_handoff(setup, monkeypatch):
