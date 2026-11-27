@@ -1,12 +1,13 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]  # SPDX `license` string (PEP 639)
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "a2a-link"
-version = "2.0.0"
-description = "Local-first coordination and collaboration for Claude Code and Codex CLI"
-license = { text = "MIT" }
+version = "2.1.0"
+description = "Local-first balancer + MCP delegation server for Claude Code / Codex CLI"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "fastapi",
@@ -17,10 +18,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-httpx"]
+test = ["pytest", "pytest-httpx", "pytest-xdist"]
 
 [project.scripts]
 agentctl = "balancer.cli:main"
+a2a-link = "balancer.cli:main"
+a2a-link-runner = "mcp_server.test_runner:main"
 
 [tool.setuptools.packages.find]
 include = ["balancer*", "mcp_server*"]
