@@ -172,3 +172,17 @@ def claude_usage(event: dict) -> tuple[float, float] | None:
     if util is None:
         return None
     return round(float(util) * 100, 1), float(window.get("resetsAt") or info.get("resetsAt") or 0)
+
+
+def claude_weekly_usage(event: dict) -> tuple[float, float] | None:
+    """(pct_used, reset_epoch) for Claude's seven-day window, if reported."""
+    if event.get("type") != "rate_limit_event":
+        return None
+    info = event.get("rate_limit_info") or {}
+    window = ((info.get("unifiedWindows") or {}).get("seven_day")) or {}
+    util = window.get("utilization")
+    if util is None and info.get("rateLimitType") == "seven_day":
+        util = info.get("utilization")
+    if util is None:
+        return None
+    return round(float(util) * 100, 1), float(window.get("resetsAt") or info.get("resetsAt") or 0)
