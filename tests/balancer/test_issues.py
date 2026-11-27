@@ -1167,8 +1167,8 @@ def test_events_stream_includes_issues_and_keeps_v1_keys(client):
 
 def test_dashboard_shows_issue_sections(client):
     html = client.get("/dashboard").text
-    for needle in ("renderIssues", "Kryteria akceptacji", "Uczestnicy", "Propozycje", "Decyzje",
-                   "Integracje", "profile_mismatch", "ZABLOKOWANY", "source_commit_sha",
+    for needle in ("renderIssues", "Acceptance criteria", "Participants", "Proposals", "Decisions",
+                   "Integrations", "profile_mismatch", "BLOCKED", "source_commit_sha",
                    "candidate_sha", "tests", "opened_from"):
         assert needle in html, needle
 
