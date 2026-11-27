@@ -10,7 +10,8 @@ import mcp_server.delegate as d
 from balancer.app import create_app
 from balancer.tasklog import TaskLog, log_path, read_tail
 from mcp_server.process import run_process
-from mcp_server.progress import claude_result, claude_usage, format_claude_event
+from mcp_server.progress import (claude_result, claude_usage, claude_weekly_usage,
+                                 format_claude_event)
 
 PY = sys.executable
 
@@ -78,7 +79,8 @@ SAY = {"type": "assistant", "message": {"content": [{"type": "text", "text": "Al
 RESULT = {"duration_api_ms": 4404, "duration_ms": 6100, "result": "Fixed calc.py; tests pass.",
           "stop_reason": "end_turn", "type": "result", "subtype": "success"}
 RATE = {"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "rateLimitType": "five_hour",
-        "unifiedWindows": {"five_hour": {"utilization": 0.62, "resetsAt": 1795345800}}}}
+        "unifiedWindows": {"five_hour": {"utilization": 0.62, "resetsAt": 1795345800},
+                           "seven_day": {"utilization": 0.38, "resetsAt": 1795932310}}}}
 
 
 def test_claude_events_become_readable_lines():
@@ -133,6 +135,10 @@ def test_claude_final_result_and_usage_are_extracted():
     stream = "\n".join(json.dumps(e) for e in (TOOL_USE, TOOL_RESULT, SAY, RESULT))
     assert claude_result(stream) == "Fixed calc.py; tests pass."
     assert claude_usage(RATE) == (62.0, 1795345800.0)
+    assert claude_weekly_usage(RATE) == (38.0, 1795932310.0)
+    assert claude_weekly_usage({"type": "rate_limit_event", "rate_limit_info": {
+        "rateLimitType": "seven_day", "utilization": 0.91, "resetsAt": 1795932310}}) == (
+            91.0, 1795932310.0)
     assert claude_usage(SAY) is None
 
 
@@ -166,8 +172,9 @@ def test_claude_delegation_logs_steps_reports_usage_and_returns_final_text(balan
                      "say: All tests pass.", "still working", "finished: done"):
         assert expected in log, expected
     assert balancer.get(f"/tasks/{tid}/log").text == read_tail(tid, 200)
-    usage = balancer.get("/events", params={"once": "true"}).text
-    assert '"agent": "claude"' in usage and "62.0" in usage
+    usage = {row["agent"]: row for row in balancer.get("/usage").json()}
+    assert usage["claude"]["pct_used"] == 62.0
+    assert usage["claude (7d)"]["pct_used"] == 38.0
 
 
 def test_codex_output_lines_are_logged_verbatim(balancer, monkeypatch, tmp_path):
