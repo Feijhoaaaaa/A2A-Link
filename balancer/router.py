@@ -86,7 +86,7 @@ def choose_agent(conn: sqlite3.Connection, candidates: list[str],
         if required_capability and not has_capability(conn, agent, required_capability):
             continue
         row = get_usage(conn, agent)
-        pct = row["pct_used"] if row else 0.0
+        pct = (row["pct_used"] or 0.0) if row else 0.0
         if pct >= usage_ceiling_pct:
             continue
         if best is None or pct < best[0]:

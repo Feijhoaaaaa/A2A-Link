@@ -3,560 +3,525 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark">
-<title>A2A-Link · Agent Operations</title>
+<title>A2A_Link operator dashboard</title>
 <style>
   :root {
     color-scheme: dark;
-    --bg: #0a0d14;
-    --surface: #101621;
-    --surface-raised: #151e2b;
-    --surface-hover: #192536;
-    --line: #263345;
-    --line-soft: #1d2938;
-    --text: #e7edf5;
-    --muted: #8d9aab;
-    --faint: #657286;
-    --blue: #68a8ff;
-    --blue-soft: #173253;
-    --green: #52d29a;
-    --amber: #f2bc68;
-    --red: #ff7c86;
-    --radius: 14px;
+    --bg: #0d1117; --panel: #151b23; --panel-2: #1b222c; --line: #2a3340; --text: #d6dde6;
+    --muted: #8b96a5; --accent: #3fb68b; --info: #58a6ff; --warn: #d6a23a; --bad: #f0605a;
     --mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   }
   * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    min-width: 320px;
-    background: radial-gradient(ellipse at 50% -25%, #16243a 0, transparent 52%), var(--bg);
-    color: var(--text);
-    font: 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  }
-  button, input { font: inherit; }
-  .shell { max-width: 1480px; margin: 0 auto; padding: 32px 34px 48px; }
-  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 34px; }
-  .brand { display: flex; align-items: center; gap: 12px; }
-  .brand-mark {
-    display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid #39699a;
-    border-radius: 12px; color: #a9d0ff; background: linear-gradient(145deg, #1b3d62, #10243a);
-    font-size: 12px; font-weight: 800; letter-spacing: -.05em;
-  }
-  .brand-name { font-size: 14px; font-weight: 700; letter-spacing: .01em; }
-  .brand-caption { color: var(--muted); font-size: 11px; margin-top: 1px; }
-  .connection { display: inline-flex; align-items: center; gap: 9px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 999px; background: #101722cc; color: var(--muted); font-size: 12px; }
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 10px #f2bc6870; }
-  .connection[data-state="online"] { color: #a5e8cb; border-color: #24523f; background: #10251d; }
-  .connection[data-state="online"] .dot { background: var(--green); box-shadow: 0 0 10px #52d29a80; }
-  .connection[data-state="offline"] { color: #ffc0c4; border-color: #61343b; background: #2a171c; }
-  .connection[data-state="offline"] .dot { background: var(--red); box-shadow: 0 0 10px #ff7c8680; }
-  .intro { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
-  .eyebrow { margin: 0 0 7px; color: var(--blue); font-size: 10px; font-weight: 750; letter-spacing: .15em; text-transform: uppercase; }
-  h1 { margin: 0; font-size: clamp(25px, 3.2vw, 34px); line-height: 1.15; letter-spacing: -.045em; font-weight: 680; }
-  .subtitle { margin: 8px 0 0; color: var(--muted); }
-  .updated { flex: 0 0 auto; color: var(--faint); font-size: 11px; }
-  .section { margin-top: 30px; }
-  .section-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 0 0 13px; }
-  h2 { margin: 0; color: #cbd5e2; font-size: 12px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
-  .section-note { color: var(--faint); font-size: 11px; }
-  .metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; }
-  .metric, .usage-card, .panel { border: 1px solid var(--line-soft); border-radius: var(--radius); background: linear-gradient(145deg, #121a26, #0f151f); box-shadow: 0 12px 34px #00000012; }
-  .metric { min-height: 102px; padding: 16px 18px; position: relative; overflow: hidden; }
-  .metric::after { content: ""; position: absolute; right: -19px; top: -34px; width: 90px; height: 90px; border: 1px solid #29384b; border-radius: 28px; transform: rotate(35deg); opacity: .5; }
-  .metric-label { color: var(--muted); font-size: 12px; }
-  .metric-value { margin-top: 7px; font-size: 27px; font-weight: 690; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
-  .metric[data-tone="blue"] .metric-value { color: #93c2ff; }
-  .metric[data-tone="green"] .metric-value { color: #76ddb1; }
-  .metric[data-tone="amber"] .metric-value { color: #f2c677; }
-  .usage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
-  .usage-card { padding: 15px 17px; }
-  .usage-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
-  .usage-agent { font-weight: 650; }
-  .usage-window { color: var(--muted); font-size: 11px; }
-  .usage-value { font-family: var(--mono); color: #c9d8ea; font-size: 12px; }
-  .bar { height: 6px; margin: 12px 0 9px; overflow: hidden; border-radius: 999px; background: #263244; }
-  .bar-fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #4e91e8, #72b8ff); transition: width .25s ease; }
-  .bar.hot .bar-fill { background: linear-gradient(90deg, #e2a548, #ff7c86); }
-  .usage-foot { display: flex; justify-content: space-between; gap: 12px; color: var(--faint); font-size: 10px; }
-  .workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 370px); gap: 14px; align-items: start; }
-  .panel { min-width: 0; overflow: hidden; }
-  .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 15px 17px; border-bottom: 1px solid var(--line-soft); }
-  .panel-title { display: flex; align-items: center; gap: 9px; font-weight: 650; }
-  .count { display: inline-grid; place-items: center; min-width: 23px; height: 21px; padding: 0 6px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); font: 11px var(--mono); }
-  .table-wrap { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; text-align: left; }
-  th { padding: 10px 13px; color: var(--faint); font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; }
-  td { padding: 12px 13px; border-top: 1px solid #1b2634; vertical-align: middle; }
-  tbody tr { transition: background .15s ease; }
-  tbody tr:hover, tbody tr.selected { background: #162233; }
-  td.task { min-width: 180px; max-width: 390px; }
-  .task-select { display: block; width: 100%; padding: 0; border: 0; background: none; color: var(--text); cursor: pointer; text-align: left; }
-  .task-select:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
-  .task-description { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 570; }
-  .task-id { margin-top: 3px; color: var(--faint); font: 10px var(--mono); }
-  .agent { color: #bac8d8; font-size: 12px; text-transform: capitalize; }
-  .status { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 999px; color: #b4c0ce; background: #151e2a; font-size: 10px; white-space: nowrap; }
-  .status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-  .status.in_progress { color: var(--amber); border-color: #574324; background: #211b12; }
-  .status.done { color: var(--green); border-color: #24523f; background: #10231c; }
-  .status.needs_human, .status.blocked, .status.failed { color: var(--red); border-color: #61343b; background: #28171c; }
-  .duration { color: #a7b4c4; font: 11px var(--mono); white-space: nowrap; }
-  .error-line { max-width: 190px; overflow: hidden; color: #efa0a6; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-  .empty { padding: 34px 18px; color: var(--muted); text-align: center; }
-  .empty strong { display: block; margin-bottom: 4px; color: #cbd5e2; font-size: 13px; }
-  .empty p { margin: 0; font-size: 12px; }
-  .detail-body { padding: 16px; }
-  .detail-placeholder { padding: 42px 20px; color: var(--muted); text-align: center; }
-  .detail-placeholder .placeholder-icon { display: grid; place-items: center; width: 36px; height: 36px; margin: 0 auto 13px; border: 1px solid var(--line); border-radius: 11px; color: var(--blue); background: var(--blue-soft); font-size: 16px; }
-  .detail-placeholder strong { display: block; margin-bottom: 4px; color: #cbd5e2; font-size: 13px; }
-  .detail-placeholder p { margin: 0; font-size: 11px; }
-  .detail-content[hidden], .detail-placeholder[hidden] { display: none; }
-  .detail-id { color: var(--faint); font: 10px var(--mono); }
-  .detail-status { margin: 10px 0 13px; }
-  .detail-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 11px 0 14px; border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); }
-  .meta-item { min-width: 0; }
-  .meta-label { display: block; color: var(--faint); font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
-  .meta-value { display: block; margin-top: 3px; overflow: hidden; color: #c8d3e0; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-  .detail-section { margin-top: 15px; }
-  .detail-section h3 { margin: 0 0 7px; color: #aebaca; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
-  pre { margin: 0; max-height: 150px; overflow: auto; padding: 10px; border: 1px solid #202d3d; border-radius: 9px; background: #0a1018; color: #bfccd9; font: 10px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
-  #log { max-height: 240px; }
-  .detail-result[hidden] { display: none; }
-  .detail-error { border-color: #4c2b33; color: #ffc0c4; }
-  .log-state, .detail-error-message { margin: 7px 0 0; color: var(--muted); font-size: 10px; }
-  .incidents { padding: 0; margin: 0; list-style: none; }
-  .incident { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; padding: 12px 16px; border-top: 1px solid #1b2634; }
-  .incident:first-child { border-top: 0; }
-  .incident-mark { width: 7px; height: 7px; margin-top: 6px; border-radius: 50%; background: var(--amber); }
-  .incident-main { min-width: 0; }
-  .incident-title { color: #d6dee8; font-size: 12px; overflow-wrap: anywhere; }
-  .incident-meta { margin-top: 3px; color: var(--faint); font-size: 10px; }
-  .issue-list { display: grid; gap: 10px; }
-  .issue-card { border: 1px solid var(--line-soft); border-radius: var(--radius); background: linear-gradient(145deg, #121a26, #0f151f); overflow: hidden; }
-  .issue-card summary { display: flex; align-items: center; gap: 12px; padding: 15px 17px; cursor: pointer; list-style: none; }
-  .issue-card summary::-webkit-details-marker { display: none; }
-  .issue-card summary::before { content: "›"; color: var(--muted); font-size: 20px; line-height: 1; transform: rotate(0); transition: transform .15s ease; }
-  .issue-card[open] summary::before { transform: rotate(90deg); }
-  .issue-summary-main { flex: 1; min-width: 0; }
-  .issue-title { overflow: hidden; color: #e2eaf4; font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-  .issue-subtitle { margin-top: 3px; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-  .issue-pill { display: inline-flex; align-items: center; padding: 4px 8px; border: 1px solid var(--line); border-radius: 999px; color: #b4c0ce; background: #151e2a; font-size: 10px; white-space: nowrap; }
-  .issue-pill.open, .issue-pill.active, .issue-pill.in_progress { color: var(--blue); border-color: #294d73; background: #12243a; }
-  .issue-pill.completed, .issue-pill.closed, .issue-pill.done { color: var(--green); border-color: #24523f; background: #10231c; }
-  .issue-pill.blocked, .issue-pill.failed, .issue-pill.needs_human { color: var(--red); border-color: #61343b; background: #28171c; }
-  .issue-body { padding: 0 17px 18px; border-top: 1px solid var(--line-soft); }
-  .issue-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 11px; padding: 14px 0; }
-  .issue-fact { min-width: 0; }
-  .issue-fact .meta-value { white-space: normal; overflow-wrap: anywhere; }
-  .issue-block { margin-top: 13px; }
-  .issue-block h3 { margin: 0 0 7px; color: #aebaca; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
-  .issue-copy { color: #c8d3e0; font-size: 11px; overflow-wrap: anywhere; }
-  .issue-list-items { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
-  .issue-list-item { padding: 9px 10px; border: 1px solid #202d3d; border-radius: 8px; color: #c3cfdd; background: #0d141d; font-size: 10px; overflow-wrap: anywhere; }
-  .issue-table-wrap { overflow-x: auto; border: 1px solid #202d3d; border-radius: 8px; }
-  .issue-table { min-width: 620px; font-size: 10px; }
-  .issue-table th { padding: 8px 10px; }
-  .issue-table td { padding: 9px 10px; color: #bac7d6; overflow-wrap: anywhere; }
-  .issue-table code, .issue-code { color: #95bff0; font: 10px var(--mono); }
-  .issue-muted { color: var(--faint); font-style: italic; }
-  .issue-alert { color: var(--red); font-weight: 650; }
-  .issue-warn { color: var(--amber); font-weight: 600; }
-  .issue-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-  .footer { margin-top: 24px; color: #596679; font-size: 10px; text-align: center; }
-  @media (max-width: 980px) {
-    .shell { padding: 26px 22px 38px; }
-    .workspace { grid-template-columns: minmax(0, 1fr) 310px; }
-    .error-col { display: none; }
-  }
-  @media (max-width: 720px) {
-    .shell { padding: 20px 14px 30px; }
-    .topbar { margin-bottom: 27px; }
-    .intro { align-items: start; flex-direction: column; gap: 12px; }
-    .updated { display: none; }
-    .metrics { gap: 8px; }
-    .metric { min-height: 86px; padding: 12px; }
-    .metric-label { font-size: 10px; }
-    .metric-value { font-size: 23px; }
-    .workspace { grid-template-columns: minmax(0, 1fr); }
-    .detail-panel { order: 1; }
-    .table-wrap { overflow: visible; }
-    table, tbody { display: block; }
-    thead { display: none; }
-    tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px 10px; padding: 12px; border-top: 1px solid #1b2634; }
-    td { display: block; min-width: 0; padding: 0; border: 0; }
-    td.task { grid-column: 1 / -1; max-width: none; }
-    td.agent { grid-column: 1; }
-    td.state-cell { grid-column: 2; grid-row: 2; justify-self: end; }
-    td.time-cell { grid-column: 1; }
-    .error-col { display: block; grid-column: 1 / -1; }
-    .error-line { max-width: 100%; }
-    .detail-body { padding: 14px; }
-    .issue-facts { grid-template-columns: 1fr 1fr; }
-    .issue-columns { grid-template-columns: 1fr; }
-    .section { margin-top: 24px; }
-  }
-  @media (max-width: 390px) {
-    .metrics { grid-template-columns: 1fr 1fr; }
-    .metric:last-child { grid-column: 1 / -1; }
-    .usage-grid { grid-template-columns: minmax(0, 1fr); }
-  }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem 1.25rem; padding: 1rem 1.5rem; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
+  header h1 { margin: 0; font-size: 1.15rem; letter-spacing: .02em; }
+  header .scope { color: var(--muted); font-size: .85rem; }
+  #conn { margin-left: auto; font-size: .85rem; }
+  #conn.live::before, #conn.down::before { content: ""; display: inline-block; width: .55rem; height: .55rem; border-radius: 50%; margin-right: .4rem; vertical-align: middle; }
+  #conn.live::before { background: var(--accent); }
+  #conn.down::before { background: var(--bad); }
+  main { padding: 1.25rem 1.5rem 3rem; display: grid; gap: 1.25rem; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); max-width: 1600px; margin: 0 auto; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.1rem; min-width: 0; }
+  .wide { grid-column: 1 / -1; }
+  @media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); padding: 1rem .75rem 2rem; } header { padding: .75rem; } }
+  h2 { font-size: .95rem; margin: 0 0 .75rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline; }
+  h2 .hint { text-transform: none; letter-spacing: 0; font-weight: 400; font-size: .8rem; }
+  h3 { margin: 0 0 .5rem; font-size: 1rem; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+  h4 { margin: .9rem 0 .35rem; font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border-bottom: 1px solid var(--line); padding: .4rem .55rem; text-align: left; vertical-align: top; }
+  th { font-weight: 600; color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
+  tbody.clickable tr { cursor: pointer; }
+  tbody.clickable tr:hover, tbody tr.sel { background: #ffffff0a; }
+  tbody tr.sel { box-shadow: inset 3px 0 0 var(--info); }
+  td.desc { max-width: 36rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  td.time, .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  code, pre { font-family: var(--mono); font-size: .82rem; }
+  code { color: #c9d4e0; word-break: break-all; }
+  pre { white-space: pre-wrap; word-break: break-word; margin: .25rem 0 .75rem; padding: .7rem .8rem; border-radius: 8px; background: #0a0e14; border: 1px solid var(--line); max-height: 26rem; overflow: auto; }
+  .muted, .nc { color: var(--muted); }
+  .nc { font-style: italic; }
+  .meta { color: var(--muted); font-size: .88rem; margin-bottom: .6rem; }
+  .st { font-weight: 600; white-space: nowrap; }
+  .badge { display: inline-block; padding: .05rem .5rem; border-radius: 999px; font-size: .75rem; font-weight: 600; border: 1px solid currentColor; white-space: nowrap; }
+  .in_progress, .running, .preparing { color: var(--warn); }
+  .queued { color: var(--info); }
+  .done, .succeeded { color: var(--accent); }
+  .needs_human, .blocked, .failed, .lost, .partial { color: var(--bad); }
+  .cancelled { color: var(--muted); }
+  .pending { color: var(--warn); }
+  .active { color: var(--info); }
+  .delivered { color: var(--accent); }
+  .undeliverable { color: var(--bad); }
+  .chips { display: flex; flex-wrap: wrap; gap: .3rem; }
+  .chip { font-size: .75rem; padding: .05rem .45rem; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--line); white-space: nowrap; }
+  .bar { background: #ffffff14; width: min(220px, 40vw); height: 10px; display: inline-block; vertical-align: middle; border-radius: 5px; overflow: hidden; }
+  .bar > span { background: var(--accent); height: 100%; display: block; }
+  .bar.hot > span { background: var(--bad); }
+  .usage-row { margin: .3rem 0; }
+  .usage-row .who { display: inline-block; min-width: 8.5rem; }
+  button { font: inherit; font-size: .85rem; padding: .25rem .7rem; cursor: pointer; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; }
+  button:hover { border-color: var(--muted); }
+  button.danger { color: var(--bad); border-color: #f0605a66; }
+  button:disabled { opacity: .5; cursor: default; }
+  #details, #request-detail { display: none; }
+  #log { max-height: 32rem; }
+  .issue, .job { border: 1px solid var(--line); border-radius: 8px; padding: .75rem .9rem; margin: .75rem 0; background: var(--panel-2); }
+  .issue table, .job table { font-size: .85rem; }
+  .kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .2rem .9rem; font-size: .88rem; }
+  .kv > dt { color: var(--muted); }
+  .kv > dd { margin: 0; min-width: 0; }
+  .alert { border: 1px solid #f0605a88; background: #f0605a14; color: #ffb3ae; padding: .55rem .75rem; border-radius: 8px; margin: .5rem 0; }
+  .note { border: 1px solid #58a6ff66; background: #58a6ff12; padding: .5rem .75rem; border-radius: 8px; margin: .5rem 0; }
+  .mismatch { color: var(--warn); font-weight: 600; }
+  details > summary { cursor: pointer; color: var(--info); margin: .4rem 0; }
+  #incidents { margin: 0; padding-left: 1.1rem; max-height: 18rem; overflow: auto; }
+  #incidents li { margin: .2rem 0; }
 </style>
 </head>
 <body>
-<main class="shell">
-  <header class="topbar">
-    <div class="brand">
-      <div class="brand-mark" aria-hidden="true">A2A</div>
-      <div><div class="brand-name">A2A-Link</div><div class="brand-caption">Local agent coordination</div></div>
-    </div>
-    <div class="connection" id="connection" data-state="connecting" role="status" aria-live="polite">
-      <span class="dot" aria-hidden="true"></span><span id="connection-text">Connecting to balancer</span>
-    </div>
-  </header>
+<header>
+  <h1>A2A_Link operator dashboard</h1>
+  <span class="scope">Local dashboard · optional tailnet access through Tailscale Serve</span>
+  <span id="conn" class="down">connecting…</span>
+</header>
 
-  <section class="intro" aria-labelledby="page-title">
-    <div>
-      <p class="eyebrow">Operations</p>
-      <h1 id="page-title">Agent control room</h1>
-      <p class="subtitle">Monitor delegated work, agent capacity, and recent activity.</p>
-    </div>
-    <div class="updated" id="updated">Waiting for the first update</div>
+<main>
+<section class="card">
+  <h2>Usage windows</h2>
+  <div id="usage" class="muted">no data</div>
+</section>
+
+<section class="card">
+  <h2>Incidents</h2>
+  <ul id="incidents"></ul>
+</section>
+
+<section class="card wide">
+  <h2>Test requests <span class="hint muted" id="requests-state">refreshed every 5 s</span></h2>
+  <div class="scroll"><table>
+    <thead><tr><th>request</th><th>state</th><th>jobs (target · state)</th><th>snapshot</th><th>updated</th></tr></thead>
+    <tbody id="test-requests" class="clickable"></tbody>
+  </table></div>
+  <section id="request-detail"></section>
+</section>
+
+<section class="card wide">
+  <h2>Delegated tasks</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>id</th><th>agent</th><th>status</th><th>time</th><th>task</th><th>error</th></tr></thead>
+    <tbody id="tasks" class="clickable"></tbody>
+  </table></div>
+  <section id="details" class="job">
+    <h3>Task <code id="d-id"></code> <button id="d-close" title="Close">Close</button></h3>
+    <div class="meta" id="d-meta"></div>
+    <h4>Prompt</h4><pre id="d-desc"></pre>
+    <h4>Progress log <span class="muted" id="d-logstate"></span></h4><pre id="log"></pre>
+    <div id="d-out-wrap"><h4 id="d-out-label">Result</h4><pre id="d-out"></pre></div>
   </section>
+</section>
 
-  <section class="metrics" aria-label="Task overview">
-    <article class="metric" data-tone="blue"><div class="metric-label">Running now</div><div class="metric-value" id="running-count">—</div></article>
-    <article class="metric" data-tone="green"><div class="metric-label">Completed</div><div class="metric-value" id="completed-count">—</div></article>
-    <article class="metric" data-tone="amber"><div class="metric-label">Needs attention</div><div class="metric-value" id="attention-count">—</div></article>
-  </section>
-
-  <section class="section" aria-labelledby="usage-heading">
-    <div class="section-head"><h2 id="usage-heading">Agent capacity</h2><span class="section-note">Usage reported by connected clients</span></div>
-    <div class="usage-grid" id="usage-grid"><div class="empty"><p>Waiting for usage data…</p></div></div>
-  </section>
-
-  <section class="section" aria-labelledby="activity-heading">
-    <div class="section-head"><h2 id="activity-heading">Recent activity</h2><span class="section-note" id="task-summary">Live task feed</span></div>
-    <div class="workspace">
-      <section class="panel" aria-label="Task list">
-        <div class="panel-head"><div class="panel-title">Tasks <span class="count" id="task-count">0</span></div><span class="section-note">Select a task to inspect it</span></div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Task</th><th>Agent</th><th>Status</th><th>Duration</th><th class="error-col">Error</th></tr></thead>
-            <tbody id="tasks"><tr><td colspan="5"><div class="empty"><strong>No tasks yet</strong><p>Delegated work will appear here as it starts.</p></div></td></tr></tbody>
-          </table>
-        </div>
-      </section>
-
-      <aside class="panel detail-panel" aria-label="Selected task details" aria-live="polite">
-        <div class="panel-head"><div class="panel-title">Task details</div><span class="section-note" id="detail-live"></span></div>
-        <div class="detail-body">
-          <div class="detail-placeholder" id="detail-placeholder"><div class="placeholder-icon" aria-hidden="true">↗</div><strong>Nothing selected</strong><p>Choose a task to see its prompt, progress, and result.</p></div>
-          <div class="detail-content" id="detail-content" hidden>
-            <div class="detail-id" id="detail-id"></div>
-            <div class="detail-status" id="detail-status"></div>
-            <div class="detail-meta">
-              <div class="meta-item"><span class="meta-label">Agent</span><span class="meta-value" id="detail-agent"></span></div>
-              <div class="meta-item"><span class="meta-label">Duration</span><span class="meta-value" id="detail-duration"></span></div>
-              <div class="meta-item"><span class="meta-label">Started</span><span class="meta-value" id="detail-created"></span></div>
-              <div class="meta-item"><span class="meta-label">Updated</span><span class="meta-value" id="detail-updated"></span></div>
-            </div>
-            <div class="detail-section"><h3>Prompt</h3><pre id="detail-prompt"></pre></div>
-            <div class="detail-section"><h3>Work log</h3><pre id="log">Loading log…</pre><p class="log-state" id="log-state"></p></div>
-            <div class="detail-section detail-result" id="result-section" hidden><h3 id="result-heading">Result</h3><pre id="detail-result"></pre></div>
-            <p class="detail-error-message" id="detail-error-message" role="status"></p>
-          </div>
-        </div>
-      </aside>
-    </div>
-  </section>
-
-  <section class="section" aria-labelledby="issues-heading">
-    <div class="section-head"><h2 id="issues-heading">Collaborative issues</h2><span class="section-note" id="issue-summary">Persistent work with multiple agents</span></div>
-    <div class="issue-list" id="issues"><div class="panel empty"><strong>No issues yet</strong><p>Collaborative work will appear here when an issue is opened.</p></div></div>
-  </section>
-
-  <section class="section" aria-labelledby="incidents-heading">
-    <div class="section-head"><h2 id="incidents-heading">Recent incidents</h2><span class="section-note">Balancer events</span></div>
-    <div class="panel"><ul class="incidents" id="incidents"><li class="empty"><strong>All clear</strong><p>No incidents have been reported.</p></li></ul></div>
-  </section>
-  <footer class="footer">A2A-Link runs locally. Dashboard data stays on this machine.</footer>
+<section class="card wide">
+  <h2>Issues</h2>
+  <div id="issues" class="muted">no issues</div>
+</section>
 </main>
 
 <script>
-  const esc = value => String(value ?? "").replace(/[&<>"']/g, char => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-  }[char]));
+  // Everything shown here comes from the API and is untrusted: interpolate only through esc().
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const $ = id => document.getElementById(id);
-  const attentionStates = new Set(["needs_human", "blocked", "failed"]);
-  let tasks = [];
-  let selectedId = null;
-  let detailTimer = null;
-  let latestSnapshot = null;
-  let lastLogAtBottom = true;
-  const openIssueIds = new Set();
+  const when = t => { const d = new Date(t); return isNaN(d) ? "" : d.toLocaleString(); };
+  let tasks = [], selected = null, logTimer = null;
 
-  function duration(task) {
-    const started = Date.parse(task.created_at || "");
-    if (!Number.isFinite(started)) return "—";
-    const ended = task.status === "in_progress" ? Date.now() : Date.parse(task.updated_at || "");
-    const seconds = Math.max(0, Math.floor(((Number.isFinite(ended) ? ended : Date.now()) - started) / 1000));
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor(seconds % 3600 / 60);
-    const remainder = seconds % 60;
-    return hours ? `${hours}h ${String(minutes).padStart(2, "0")}m` : `${minutes}m ${String(remainder).padStart(2, "0")}s`;
+  // --- delegated tasks (v1) --------------------------------------------------------
+  function fmt(sec) {
+    sec = Math.max(0, Math.floor(sec));
+    const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+    const mm = String(m).padStart(2, "0"), ss = String(s).padStart(2, "0");
+    return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
   }
-
-  function formatTime(value) {
-    if (!value) return "—";
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  }
-
-  function setConnection(state) {
-    const labels = { connecting: "Connecting to balancer", online: "Balancer connected", offline: "Reconnecting to balancer" };
-    $("connection").dataset.state = state;
-    $("connection-text").textContent = labels[state];
-    if (state === "offline") $("updated").textContent = "Connection interrupted · showing last update";
-  }
-
-  function renderOverview() {
-    const running = tasks.filter(task => task.status === "in_progress").length;
-    const completed = tasks.filter(task => task.status === "done").length;
-    const attention = tasks.filter(task => attentionStates.has(task.status)).length;
-    $("running-count").textContent = running;
-    $("completed-count").textContent = completed;
-    $("attention-count").textContent = attention;
-    $("task-count").textContent = tasks.length;
-    $("task-summary").textContent = tasks.length ? `${tasks.length} task${tasks.length === 1 ? "" : "s"} in history` : "Waiting for delegated work";
+  function duration(t) {
+    const start = Date.parse(t.created_at);
+    if (isNaN(start)) return "";
+    const end = t.status === "in_progress" ? Date.now() : Date.parse(t.updated_at);
+    return fmt((end - start) / 1000) + (t.status === "in_progress" ? " ⏱" : "");
   }
 
   function renderTasks() {
-    const body = $("tasks");
-    if (!tasks.length) {
-      body.innerHTML = '<tr><td colspan="5"><div class="empty"><strong>No tasks yet</strong><p>Delegated work will appear here as it starts.</p></div></td></tr>';
-      return;
-    }
-    body.innerHTML = [...tasks].reverse().map(task => {
-      const id = esc(task.id);
-      const status = esc(task.status || "unknown");
-      const description = esc(task.description || "Untitled task");
-      const error = esc((task.error || "").split("\n")[0]);
-      return `<tr class="${task.id === selectedId ? "selected" : ""}">
-        <td class="task"><button class="task-select" type="button" data-task-id="${id}" aria-pressed="${task.id === selectedId}"><div class="task-description" title="${description}">${description}</div><div class="task-id">${id}</div></button></td>
-        <td class="agent">${esc(task.agent || "—")}</td>
-        <td class="state-cell"><span class="status ${status}">${status.replaceAll("_", " ")}</span></td>
-        <td class="duration time-cell">${esc(duration(task))}</td>
-        <td class="error-col"><div class="error-line" title="${error}">${error || "—"}</div></td>
-      </tr>`;
-    }).join("");
+    $("tasks").innerHTML = [...tasks].reverse().map(t =>
+      `<tr data-id="${esc(t.id)}" class="${t.id === selected ? "sel" : ""}">` +
+      `<td><code>${esc(t.id)}</code></td><td>${esc(t.agent)}</td><td class="st ${esc(t.status)}">${esc(t.status)}</td>` +
+      `<td class="time">${esc(duration(t))}</td><td class="desc" title="${esc(t.description)}">${esc(t.description)}</td>` +
+      `<td>${esc((t.error || "").split("\n")[0].slice(0, 120))}</td></tr>`).join("") ||
+      '<tr><td colspan="6" class="nc">no delegated tasks</td></tr>';
   }
 
-  function renderUsage(usage) {
-    const container = $("usage-grid");
-    if (!usage.length) {
-      container.innerHTML = '<div class="empty"><strong>No usage data yet</strong><p>Capacity appears after an agent reports its limits.</p></div>';
-      return;
-    }
-    container.innerHTML = usage.map(item => {
-      const raw = Number(item.pct_used);
-      const pct = Number.isFinite(raw) ? Math.min(100, Math.max(0, raw)) : 0;
-      const windowName = item.window === "7d" ? "7-day window" : item.window === "5h" ? "5-hour window" : `${esc(item.window || "Usage")} window`;
-      const reset = item.resets_at ? `Resets ${formatTime(Number(item.resets_at) * 1000)}` : "Reset time unavailable";
-      const agent = esc(item.agent || "Agent");
-      return `<article class="usage-card">
-        <div class="usage-head"><span class="usage-agent">${agent}</span><span class="usage-value">${Math.round(pct)}%</span></div>
-        <div class="usage-window">${windowName}</div>
-        <div class="bar ${pct >= 90 ? "hot" : ""}" role="progressbar" aria-label="${agent} ${windowName}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct)}"><div class="bar-fill" style="width:${pct}%"></div></div>
-        <div class="usage-foot"><span>${pct >= 90 ? "Near capacity" : "Available capacity"}</span><span>${esc(reset)}</span></div>
-      </article>`;
-    }).join("");
-  }
-
-  function shortSha(value) {
-    return value ? `<code title="${esc(value)}">${esc(String(value).slice(0, 10))}</code>` : '<span class="issue-muted">Not available</span>';
-  }
-
-  function profileLabel(profile) {
-    if (!profile) return '<span class="issue-muted">Not confirmed</span>';
-    const model = profile.model ? esc(profile.model) : "Unknown model";
-    const effort = profile.effort ? esc(profile.effort) : "Unknown effort";
-    return `${model} / ${effort}`;
-  }
-
-  function renderIssue(snapshot) {
-    const issue = snapshot.issue || {};
-    const round = snapshot.round || {};
-    const id = String(issue.id || "unknown");
-    const state = String(issue.state || "unknown");
-    const participants = Object.entries(snapshot.participants || {}).map(([key, participant]) => {
-      const handle = participant.handle
-        ? `${esc(participant.handle.adapter_type)} · <code>${esc(participant.handle.session_id)}</code> · generation ${esc(participant.handle.generation)}`
-        : '<span class="issue-muted">No active handle</span>';
-      const blocked = participant.blocked
-        ? `<div class="issue-alert">Blocked: ${esc(participant.blocked.reason)}${participant.blocked.attempt_id ? ` · ${esc(participant.blocked.attempt_id)}` : ""}</div>`
-        : "";
-      const ready = participant.ready ? `Ready · ${shortSha(participant.ready.source_commit_sha)}` : '<span class="issue-muted">Not ready</span>';
-      return `<tr><td>${esc(key)}</td><td>${handle}</td><td>${ready}</td><td>${participant.active_message_id ? esc(participant.active_message_id) : '<span class="issue-muted">No active turn</span>'}${blocked}</td></tr>`;
-    }).join("");
-
-    const messages = (snapshot.messages || []).map(message => {
-      const context = message.context || {};
-      let contextSummary = "Context usage not reported";
-      if (context.threshold_reached === true) contextSummary = '<span class="issue-warn">Context threshold reached · manual replacement</span>';
-      else if (context.used_tokens != null && context.window != null) {
-        const percent = Math.round(Number(context.used_tokens) / Number(context.window) * 100);
-        contextSummary = `Context ${esc(context.used_tokens)} / ${esc(context.window)} tokens (${esc(percent)}%)`;
-      }
-      const mismatch = message.profile_mismatch ? ' · <span class="issue-warn">Profile mismatch</span>' : "";
-      return `<tr><td>${esc(message.participant)}</td><td><code>${esc(message.message_id)}</code></td><td><span class="status ${esc(message.state)}">${esc((message.state || "unknown").replaceAll("_", " "))}</span></td>
-        <td>Requested: ${profileLabel(message.requested_profile)}<br><span class="issue-muted">Source: ${esc(message.profile_source || "Not resolved")}</span><br>Confirmed: ${profileLabel(message.confirmed_profile)}${mismatch}<br>${contextSummary}</td>
-        <td>${esc(message.prompt)}</td></tr>`;
-    }).join("");
-
-    const acceptance = (issue.acceptance || []).map(item => `<li class="issue-list-item">${esc(item)}</li>`).join("");
-    const proposals = (snapshot.proposals || []).map(proposal => `<li class="issue-list-item"><strong>${esc(proposal.proposal_id)} · v${esc(proposal.proposal_version)}</strong> · ${esc(proposal.by)} · ${esc(proposal.state)}<br>${esc(proposal.text)}</li>`).join("");
-    const decisions = (snapshot.decisions || []).map(decision => `<li class="issue-list-item"><strong>${esc(decision.kind)}</strong> · ${esc(decision.proposal_id)} v${esc(decision.proposal_version)} · ${esc(decision.by)}${decision.note ? `<br>${esc(decision.note)}` : ""}</li>`).join("");
-    const generations = (snapshot.generation_history || []).map(generation => {
-      const handoff = generation.handoff ? JSON.stringify(generation.handoff) : "No handoff details";
-      return `<li class="issue-list-item"><strong>${esc(generation.participant)}</strong> · generation ${esc(generation.from_generation)} → ${esc(generation.to_generation)}<br>${esc(generation.reason)}<br><span class="issue-muted">Handoff: ${esc(handoff)}</span></li>`;
-    }).join("");
-    const integrations = (snapshot.integrations || []).map(integration => {
-      const tests = integration.tests ? `${esc(integration.tests.status)} · exit ${esc(integration.tests.exit_code)}` : "Not run";
-      const sources = Object.entries(integration.source_shas || {}).map(([agent, sha]) => `${esc(agent)} ${shortSha(sha)}`).join(" · ") || '<span class="issue-muted">No source SHAs</span>';
-      const leaseLost = integration.lease?.state === "owner_lost_suspected" ? '<div class="issue-alert">Supervisor connection lost; integration is blocked.</div>' : "";
-      const argv = (integration.verification_argv || []).join(" ") || "No verification command configured";
-      return `<li class="issue-list-item"><strong>${esc(integration.integration_id)}</strong> · <span class="status ${esc(integration.state)}">${esc(integration.state)}</span>${leaseLost}<br>Sources: ${sources}<br>Candidate ${shortSha(integration.candidate_sha)} · Tested ${shortSha(integration.tested_sha)}<br>Verification: <code>${esc(argv)}</code> · Tests: ${tests}</li>`;
-    }).join("");
-    const none = '<li class="issue-muted">None recorded</li>';
-
-    return `<details class="issue-card" data-issue-id="${esc(id)}" ${openIssueIds.has(id) ? "open" : ""}>
-      <summary><div class="issue-summary-main"><div class="issue-title">${esc(issue.title || "Untitled issue")}</div><div class="issue-subtitle">${esc(id)} · v${esc(issue.version ?? "—")} · Round ${esc(round.number ?? "—")} · Opened from ${esc(issue.opened_from || "unknown")}</div></div><span class="issue-pill ${esc(state)}">${esc(state.replaceAll("_", " "))}</span></summary>
-      <div class="issue-body">
-        <div class="issue-facts">
-          <div class="issue-fact"><span class="meta-label">Goal</span><span class="meta-value">${esc(issue.goal || "No goal recorded")}</span></div>
-          <div class="issue-fact"><span class="meta-label">Round and base</span><span class="meta-value">${esc(round.number ?? "—")} · ${esc(round.state || "unknown")} · ${shortSha(round.base_sha)}</span></div>
-          <div class="issue-fact"><span class="meta-label">Project directory</span><span class="meta-value">${esc(issue.cwd || "—")}</span></div>
-        </div>
-        <div class="issue-columns">
-          <section class="issue-block"><h3>Acceptance criteria</h3><ul class="issue-list-items">${acceptance || none}</ul></section>
-          <section class="issue-block"><h3>Proposals</h3><ul class="issue-list-items">${proposals || none}</ul></section>
-          <section class="issue-block"><h3>Decisions</h3><ul class="issue-list-items">${decisions || none}</ul></section>
-          <section class="issue-block"><h3>Generation handoffs</h3><ul class="issue-list-items">${generations || none}</ul></section>
-        </div>
-        <section class="issue-block"><h3>Participants and readiness</h3><div class="issue-table-wrap"><table class="issue-table"><thead><tr><th>Agent</th><th>Thread</th><th>Source</th><th>Turn state</th></tr></thead><tbody>${participants || '<tr><td colspan="4" class="issue-muted">No participants</td></tr>'}</tbody></table></div></section>
-        <section class="issue-block"><h3>Messages and context</h3><div class="issue-table-wrap"><table class="issue-table"><thead><tr><th>Agent</th><th>Message</th><th>State</th><th>Model profile</th><th>Prompt</th></tr></thead><tbody>${messages || '<tr><td colspan="5" class="issue-muted">No messages</td></tr>'}</tbody></table></div></section>
-        <section class="issue-block"><h3>Integrations and verification</h3><ul class="issue-list-items">${integrations || none}</ul></section>
-      </div>
-    </details>`;
-  }
-
-  function renderIssues(issues) {
-    const container = $("issues");
-    container.querySelectorAll("details[data-issue-id][open]").forEach(item => openIssueIds.add(item.dataset.issueId));
-    const ids = new Set(issues.map(snapshot => String(snapshot.issue?.id || "unknown")));
-    for (const id of openIssueIds) if (!ids.has(id)) openIssueIds.delete(id);
-    $("issue-summary").textContent = issues.length ? `${issues.length} issue${issues.length === 1 ? "" : "s"} · live from the balancer` : "Persistent work with multiple agents";
-    if (!issues.length) {
-      container.innerHTML = '<div class="panel empty"><strong>No issues yet</strong><p>Collaborative work will appear here when an issue is opened.</p></div>';
-      return;
-    }
-    container.innerHTML = issues.map(renderIssue).join("");
-    container.querySelectorAll("details[data-issue-id]").forEach(item => item.addEventListener("toggle", () => {
-      if (item.open) openIssueIds.add(item.dataset.issueId);
-      else openIssueIds.delete(item.dataset.issueId);
-    }));
-  }
-
-  function renderIncidents(incidents) {
-    const list = $("incidents");
-    if (!incidents.length) {
-      list.innerHTML = '<li class="empty"><strong>All clear</strong><p>No incidents have been reported.</p></li>';
-      return;
-    }
-    list.innerHTML = [...incidents].reverse().map(item => `<li class="incident">
-      <span class="incident-mark" aria-hidden="true"></span>
-      <div class="incident-main"><div class="incident-title">${esc(item.kind)} · ${esc(item.detail)}</div><div class="incident-meta">${esc(item.agent)} · ${esc(formatTime(item.created_at))}</div></div>
-    </li>`).join("");
-  }
+  $("tasks").addEventListener("click", e => {
+    const row = e.target.closest("tr[data-id]");
+    if (row) openTask(row.dataset.id);
+  });
+  $("d-close").onclick = () => { selected = null; clearInterval(logTimer); logTimer = null; $("details").style.display = "none"; renderTasks(); };
 
   async function refreshDetails() {
-    if (!selectedId) return;
-    const id = selectedId;
-    $("detail-error-message").textContent = "";
+    if (!selected) return;
+    const id = selected;
     try {
-      const response = await fetch(`/tasks/${encodeURIComponent(id)}`);
-      if (!response.ok) throw new Error(`Task details returned ${response.status}`);
-      const task = await response.json();
-      if (id !== selectedId) return;
-      $("detail-placeholder").hidden = true;
-      $("detail-content").hidden = false;
-      $("detail-id").textContent = task.id;
-      $("detail-status").innerHTML = `<span class="status ${esc(task.status)}">${esc((task.status || "unknown").replaceAll("_", " "))}</span>`;
-      $("detail-agent").textContent = task.agent || "—";
-      $("detail-duration").textContent = duration(task);
-      $("detail-created").textContent = formatTime(task.created_at);
-      $("detail-updated").textContent = formatTime(task.updated_at);
-      $("detail-prompt").textContent = task.description || "No prompt was recorded.";
-      const logResponse = await fetch(`/tasks/${encodeURIComponent(id)}/log?lines=400`);
-      if (id !== selectedId) return;
-      $("log").textContent = logResponse.ok ? await logResponse.text() : "No work log is available for this task.";
-      if (lastLogAtBottom) $("log").scrollTop = $("log").scrollHeight;
-      const active = task.status === "in_progress";
-      $("log-state").textContent = active ? "Live · refreshes every 2 seconds" : "Task is no longer running";
-      $("detail-live").textContent = active ? "LIVE" : "";
-      const result = task.status === "done" ? task.result : task.error;
-      $("result-section").hidden = !result;
-      $("result-heading").textContent = task.status === "done" ? "Result" : "Error";
-      $("detail-result").classList.toggle("detail-error", task.status !== "done");
-      $("detail-result").textContent = result || "";
-      if (active && !detailTimer) detailTimer = setInterval(refreshDetails, 2000);
-      if (!active && detailTimer) { clearInterval(detailTimer); detailTimer = null; }
-    } catch (error) {
-      if (id === selectedId) $("detail-error-message").textContent = `Could not refresh task details: ${error.message}`;
+      const t = await (await fetch(`/tasks/${encodeURIComponent(id)}`)).json();
+      if (id !== selected) return;
+      $("d-id").textContent = id;
+      $("d-meta").innerHTML = `agent <b>${esc(t.agent)}</b> · status <span class="st ${esc(t.status)}">${esc(t.status)}</span>` +
+        ` · time ${esc(duration(t))} · created ${esc(when(t.created_at))}`;
+      $("d-desc").textContent = t.description || "";
+      const out = t.status === "done" ? t.result : t.error;
+      $("d-out-wrap").style.display = out ? "" : "none";
+      $("d-out-label").textContent = t.status === "done" ? "Result" : "Error";
+      $("d-out").textContent = out || "";
+      const r = await fetch(`/tasks/${encodeURIComponent(id)}/log?lines=400`);
+      const log = $("log");
+      const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 30;
+      log.textContent = r.ok ? await r.text() : "(no log: the task was not delegated through the MCP server, or its log was deleted)";
+      if (atBottom) log.scrollTop = log.scrollHeight;
+      $("d-logstate").textContent = t.status === "in_progress" ? "— live, refreshed every 2 s" : "";
+      if (t.status !== "in_progress") { clearInterval(logTimer); logTimer = null; }
+    } catch (err) {
+      $("d-logstate").textContent = "— refresh failed: " + err;
     }
   }
 
-  $("log").addEventListener("scroll", () => {
-    const log = $("log");
-    lastLogAtBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 30;
-  });
-  $("tasks").addEventListener("click", event => {
-    const button = event.target.closest("button[data-task-id]");
-    if (!button) return;
-    selectedId = button.dataset.taskId;
-    lastLogAtBottom = true;
-    $("detail-placeholder").hidden = true;
-    $("detail-content").hidden = false;
-    $("detail-id").textContent = selectedId;
-    $("detail-prompt").textContent = "Loading task details…";
-    $("log").textContent = "Loading work log…";
-    $("result-section").hidden = true;
-    $("detail-error-message").textContent = "";
+  function openTask(id) {
+    selected = id;
+    $("details").style.display = "block";
+    $("log").textContent = "";
     renderTasks();
-    if (detailTimer) { clearInterval(detailTimer); detailTimer = null; }
+    clearInterval(logTimer);
     refreshDetails();
+    logTimer = setInterval(refreshDetails, 2000);
+  }
+
+  // --- issues (v2) -----------------------------------------------------------------
+  // Profile fields the CLI did not confirm stay null; show them as "not confirmed", never as the requested value.
+  const prof = p => p ? `${p.model ? esc(p.model) : '<span class="nc">?</span>'} / ${p.effort ? esc(p.effort) : '<span class="nc">?</span>'}` : '<span class="nc">not confirmed</span>';
+  const sha = s => s ? `<code title="${esc(s)}">${esc(String(s).slice(0, 10))}</code>` : '<span class="nc">-</span>';
+  const none = '<li class="nc">none</li>';
+
+  function resumeCommand(handle) {
+    const sessionId = String(handle.session_id || "");
+    const cwd = String(handle.cwd || "");
+    const isWindows = /^[A-Za-z]:[\\/]/.test(cwd) || cwd.startsWith("\\\\");
+    const quote = isWindows
+      ? value => "'" + String(value).replace(/'/g, "''") + "'"
+      : value => "'" + String(value).replace(/'/g, "'\\''") + "'";
+    const cli = handle.adapter_type === "claude" ? "claude --resume" :
+      (handle.adapter_type === "codex" ? "codex resume --all" : null);
+    if (!cli || !sessionId) return null;
+    const resume = `${cli} ${quote(sessionId)}`;
+    if (!cwd) return resume;
+    return isWindows ? `Set-Location -LiteralPath ${quote(cwd)}; ${resume}` :
+      `cd -- ${quote(cwd)} && ${resume}`;
+  }
+
+  async function copyHandleValue(button) {
+    const original = button.textContent;
+    try {
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error("clipboard API unavailable");
+        await navigator.clipboard.writeText(button.dataset.copy);
+      } catch {
+        const area = document.createElement("textarea");
+        area.value = button.dataset.copy;
+        area.setAttribute("readonly", "");
+        area.style.position = "fixed";
+        area.style.left = "-9999px";
+        document.body.appendChild(area);
+        area.select();
+        const copied = document.execCommand("copy");
+        area.remove();
+        if (!copied) throw new Error("clipboard copy failed");
+      }
+      button.textContent = "Copied";
+    } catch {
+      button.textContent = "Copy failed";
+    }
+    setTimeout(() => { button.textContent = original; }, 1600);
+  }
+
+  function renderIssue(d) {
+    const i = d.issue, r = d.round;
+    const parts = Object.entries(d.participants).map(([k, p]) => {
+      const command = p.handle && resumeCommand(p.handle);
+      const h = p.handle ? `${esc(p.handle.adapter_type)} · gen ${esc(p.handle.generation)}<br>` +
+        `<code>${esc(p.handle.session_id)}</code> <button type="button" data-copy="${esc(p.handle.session_id)}">Copy session ID</button>` +
+        (command ? ` <button type="button" data-copy="${esc(command)}">Copy resume command</button>` : "") +
+        `<br><span class="muted">working directory: <code>${esc(p.handle.cwd || "not recorded")}</code></span>` :
+        '<span class="nc">no handle</span>';
+      const blocked = p.blocked ? ` <span class="blocked">BLOCKED: ${esc(p.blocked.reason)}${p.blocked.attempt_id ? " (" + esc(p.blocked.attempt_id) + ")" : ""}</span>` : "";
+      const ready = p.ready ? `ready: ${sha(p.ready.source_commit_sha)}` : "not ready";
+      return `<tr><td>${esc(k)}</td><td>${h}</td><td>${ready}</td><td>${p.active_message_id ? esc(p.active_message_id) : ""}${blocked}</td></tr>`;
+    }).join("");
+    const msgs = d.messages.map(m => {
+      const mm = m.profile_mismatch ? ' <span class="mismatch">profile mismatch</span>' : "";
+      const c = m.context || {};
+      const context = c.threshold_reached === true ? ' · <span class="mismatch">context ≥ 90% (manual handoff)</span>' :
+        (c.used_tokens != null && c.window != null ? ` · context ${esc(c.used_tokens)} / ${esc(c.window)} (${esc(Math.round(c.used_tokens / c.window * 100))}%)` :
+         (Object.prototype.hasOwnProperty.call(c, "used_tokens") ? ' · context unconfirmed' : ""));
+      return `<tr><td>${esc(m.participant)}</td><td>${esc(m.message_id)}</td><td class="st ${esc(m.state)}">${esc(m.state)}</td>` +
+        `<td>requested: ${prof(m.requested_profile)} <span class="muted">(source: ${m.profile_source ? esc(m.profile_source) : "unresolved"})</span>` +
+        `<br>confirmed: ${prof(m.confirmed_profile)}${mm}<br>${context}</td>` +
+        `<td class="desc" title="${esc(m.prompt)}">${esc(m.prompt)}</td></tr>`;
+    }).join("");
+    const props = d.proposals.map(p => `<li>${esc(p.proposal_id)} v${esc(p.proposal_version)} [${esc(p.by)}] <b>${esc(p.state)}</b>: ${esc(p.text)}</li>`).join("");
+    const decs = d.decisions.map(x => `<li>${esc(x.kind)} ${esc(x.proposal_id)} v${esc(x.proposal_version)} (${esc(x.by)}) ${esc(x.note || "")}</li>`).join("");
+    const generations = (d.generation_history || []).map(g => `<li>${esc(g.participant)} ${esc(g.from_generation)} → ${esc(g.to_generation)} · ${esc(g.reason)} · handoff: ${esc(g.handoff ? JSON.stringify(g.handoff) : "none")}</li>`).join("");
+    const ints = d.integrations.map(g => {
+      const t = g.tests;
+      const lease = g.lease && g.lease.state === "owner_lost_suspected" ? ' <span class="blocked">BLOCKED: owner lost (owner_lost_suspected)</span>' : "";
+      return `<li>${esc(g.integration_id)} <b class="st ${esc(g.state)}">${esc(g.state)}</b>${lease}<br>` +
+        `sources: ${Object.entries(g.source_shas || {}).map(([k, v]) => esc(k) + " " + sha(v)).join(", ")} → candidate ${sha(g.candidate_sha)}, tested ${sha(g.tested_sha)}<br>` +
+        `command: <code>${esc((g.verification_argv || []).join(" ") || "(empty: blocks success)")}</code>` +
+        (t ? ` · tests: <b>${esc(t.status)}</b> exit ${esc(t.exit_code)}` : "") + `</li>`;
+    }).join("");
+    const acc = (i.acceptance || []).map(a => `<li>${esc(a)}</li>`).join("");
+    return `<div class="issue"><h3>${esc(i.title)} <span class="muted">${esc(i.id)}</span> <span class="st ${esc(i.state)}">${esc(i.state)}</span> <span class="muted">v${esc(i.version)} · opened from ${esc(i.opened_from)}</span></h3>` +
+      `<div class="meta">goal: ${esc(i.goal)}<br>round ${esc(r.number)} (${esc(r.state)}), base ${sha(r.base_sha)} · cwd <code>${esc(i.cwd)}</code></div>` +
+      `<h4>Acceptance criteria</h4><ul>${acc || none}</ul>` +
+      `<h4>Participants</h4><div class="scroll"><table><thead><tr><th>key</th><th>handle</th><th>readiness (SHA)</th><th>turn / block</th></tr></thead><tbody>${parts}</tbody></table></div>` +
+      `<h4>Messages and questions</h4><div class="scroll"><table><thead><tr><th>who</th><th>id</th><th>state</th><th>profile</th><th>content</th></tr></thead><tbody>${msgs}</tbody></table></div>` +
+      `<h4>Proposals</h4><ul>${props || none}</ul><h4>Decisions</h4><ul>${decs || none}</ul>` +
+      `<h4>Generation handoffs</h4><ul>${generations || none}</ul>` +
+      `<h4>Integrations</h4><ul>${ints || none}</ul></div>`;
+  }
+  function renderIssues(list) {
+    $("issues").innerHTML = list.length ? list.map(renderIssue).join("") : '<span class="muted">no issues</span>';
+  }
+
+  $("issues").addEventListener("click", async e => {
+    const button = e.target.closest("button[data-copy]");
+    if (button) await copyHandleValue(button);
   });
 
-  const events = new EventSource("/events");
-  events.onopen = () => setConnection("online");
-  events.onerror = () => setConnection("offline");
-  events.onmessage = event => {
-    try {
-      latestSnapshot = JSON.parse(event.data);
-      tasks = Array.isArray(latestSnapshot.tasks) ? latestSnapshot.tasks : [];
-      renderOverview();
-      renderTasks();
-      renderUsage(Array.isArray(latestSnapshot.usage) ? latestSnapshot.usage : []);
-      renderIssues(Array.isArray(latestSnapshot.issues) ? latestSnapshot.issues : []);
-      renderIncidents(Array.isArray(latestSnapshot.incidents) ? latestSnapshot.incidents : []);
-      $("updated").textContent = `Last updated ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
-    } catch (error) {
-      $("task-summary").textContent = `Could not read balancer update: ${error.message}`;
+  // --- background test requests ------------------------------------------------------
+  const ACTIVE = new Set(["queued", "preparing", "running"]);
+  const TERMINAL = new Set(["succeeded", "failed", "cancelled", "lost"]);
+  const RESOURCE_KEYS = ["parallelism", "parallelism_args", "memory_limit_mb", "timeout_s"];
+  const LOG_CHUNK = 65536, LOG_VIEW_MAX = 1048576;  // read 64 KiB per call, show at most 1 MiB
+  let requests = [], selectedRequest = null, requestsError = null;
+  const openLogs = new Set(), logCache = {};
+
+  const badge = s => `<span class="badge ${esc(s)}">${esc(s)}</span>`;
+  const targetText = t => typeof t === "string" ? t : (t && Array.isArray(t.labels) ? t.labels.join(" + ") : JSON.stringify(t));
+  const canCancel = req => !req.cancel_requested && req.jobs.some(j => ACTIVE.has(j.state));
+  const val = v => v === null || v === undefined ? '<span class="nc">null</span>' :
+    `<code>${esc(typeof v === "object" ? JSON.stringify(v) : String(v))}</code>`;
+
+  function renderRequests() {
+    $("test-requests").innerHTML = requests.map(r =>
+      `<tr data-request="${esc(r.request_id)}" class="${r.request_id === selectedRequest ? "sel" : ""}">` +
+      `<td><code>${esc(r.request_id)}</code></td><td>${badge(r.state)}${r.cancel_requested ? ' <span class="muted">cancel requested</span>' : ""}</td>` +
+      `<td><div class="chips">${r.jobs.map(j => `<span class="chip">${esc(targetText(j.target))} · <span class="${esc(j.state)}">${esc(j.state)}</span></span>`).join("")}</div></td>` +
+      `<td>${sha(r.snapshot_sha256)}</td><td class="time">${esc(when(r.updated_at))}</td></tr>`).join("") ||
+      `<tr><td colspan="5" class="nc">${requestsError ? "request list unavailable" : "no test requests"}</td></tr>`;
+  }
+
+  function renderProfile(p) {
+    if (typeof p === "string") return `profile <code>${esc(p)}</code>`;
+    if (!p || typeof p !== "object") return `profile ${val(p)}`;
+    const name = p.name ? `<code>${esc(p.name)}</code> · ` : "";
+    return `profile ${name}argv <code>${esc((p.argv || []).join(" "))}</code>`;
+  }
+
+  function renderRequested(p) {
+    const keys = p && typeof p === "object" ? RESOURCE_KEYS.filter(k => k in p) : [];
+    const rows = keys.map(k => `<dt>${esc(k)}</dt><dd>${val(p[k])}</dd>`).join("");
+    return `<h4>Requested resources</h4>` + (rows ? `<dl class="kv">${rows}</dl>` :
+      '<div class="nc">profile defaults (parallelism auto, no memory cap)</div>');
+  }
+
+  function enforcement(v) {
+    if (v === true) return "cap installed for the whole process tree";
+    if (v === false) return "cap requested but not enforced by this runner";
+    return "no memory cap requested";
+  }
+
+  function renderEffective(res) {
+    if (!res || typeof res !== "object") return '<h4>Effective resources</h4><div class="nc">the runner reported none</div>';
+    return `<h4>Effective resources <span class="muted">(as reported by the runner)</span></h4><dl class="kv">` +
+      `<dt>parallelism</dt><dd>${val(res.parallelism)}</dd>` +
+      `<dt>parallel_args_applied</dt><dd>${val(res.parallel_args_applied)}</dd>` +
+      `<dt>memory_limit_mb</dt><dd>${val(res.memory_limit_mb)}</dd>` +
+      `<dt>memory_limit_enforced</dt><dd>${val(res.memory_limit_enforced)} <span class="muted">${esc(enforcement(res.memory_limit_enforced))}</span></dd></dl>`;
+  }
+
+  function renderResult(r) {
+    const rows = [["status", r.status], ["exit_code", r.exit_code], ["timed_out", r.timed_out], ["duration_s", r.duration_s]]
+      .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${val(v)}</dd>`).join("");
+    return `<h4>Result</h4><dl class="kv">${rows}</dl>` +
+      (r.error ? `<h4>Error</h4><pre>${esc(r.error)}</pre>` : "") +
+      `<h4>stdout tail</h4>${r.stdout_tail ? `<pre>${esc(r.stdout_tail)}</pre>` : '<div class="nc">empty</div>'}` +
+      `<h4>stderr tail</h4>${r.stderr_tail ? `<pre>${esc(r.stderr_tail)}</pre>` : '<div class="nc">empty</div>'}` +
+      renderEffective(r.resources);
+  }
+
+  function renderJob(req, j) {
+    const platform = j.runner_platform ? esc(j.runner_platform) : '<span class="nc">not assigned</span>';
+    const stored = j.log_stored_bytes != null ? `${esc(j.log_stored_bytes)} bytes stored${j.log_truncated ? " (truncated at the limit)" : ""}` : "";
+    let body = `<dl class="kv"><dt>job</dt><dd><code>${esc(j.job_id)}</code></dd>` +
+      `<dt>target / OS</dt><dd>${esc(targetText(j.target))}</dd>` +
+      `<dt>runner</dt><dd>${j.runner_id ? `<code>${esc(j.runner_id)}</code>` : '<span class="nc">not claimed</span>'}</dd>` +
+      `<dt>platform</dt><dd>${platform}</dd>` +
+      (j.lease_expires_at && ACTIVE.has(j.state) ? `<dt>lease expires</dt><dd>${esc(when(j.lease_expires_at))}</dd>` : "") +
+      `<dt>updated</dt><dd>${esc(when(j.updated_at))}</dd></dl>`;
+    if (j.state === "lost") {
+      body += `<div class="alert"><b>Lost.</b> The lease expired and the balancer could not prove that the process stopped. ` +
+        `The runner slot stays held and needs manual resolution: check on runner <code>${esc(j.runner_id || "unknown")}</code> whether the test process tree is still alive. ` +
+        `That runner claims no further work until then, and this release has no API that releases the slot. The job is never retried automatically and a late result is never accepted as success.</div>`;
     }
+    if (j.cancel_requested && ACTIVE.has(j.state)) {
+      body += '<div class="note">Cancellation requested: waiting for the runner to confirm its process tree has stopped.</div>';
+    }
+    if (ACTIVE.has(j.state)) body += renderRequested(req.profile);
+    if (j.result) body += renderResult(j.result);
+    else if (TERMINAL.has(j.state)) body += '<div class="nc">No result was reported, so no effective resources are known.</div>';
+    const open = openLogs.has(j.job_id) ? " open" : "";
+    body += `<details data-log-request="${esc(req.request_id)}" data-log-job="${esc(j.job_id)}"${open}>` +
+      `<summary>Log <span class="muted">${stored}</span></summary><div id="log-${esc(j.job_id)}">${renderLog(j.job_id)}</div></details>`;
+    return `<div class="job"><h3>${esc(targetText(j.target))} ${badge(j.state)}</h3>${body}</div>`;
+  }
+
+  const DELIVERY_TEXT = {
+    pending: "The result is stored and waits to be sent to the managed chat. It stays pending while that session is busy.",
+    active: "A turn carrying the result is running in the managed chat. Delivery is not complete yet.",
+    delivered: "The turn carrying the result completed in the managed chat.",
+    failed: "The turn carrying the result did not complete successfully. The result is still stored here.",
+    undeliverable: "The result cannot be sent to the original session. It is still stored here.",
   };
-  setInterval(() => {
-    if (latestSnapshot) renderTasks();
-  }, 1000);
+
+  // delivery is null when no session asked for the result, or the jobs have not all finished.
+  function renderDelivery(d) {
+    if (!d) return "";
+    const reason = d.reason ? ` Reason: <code>${esc(d.reason)}</code>` : "";
+    const box = d.state === "failed" || d.state === "undeliverable" ? "alert" : "note";
+    return `<div class="${box}">Session delivery: ${badge(d.state)} ${esc(DELIVERY_TEXT[d.state])}${reason}</div>`;
+  }
+
+  function renderRequestDetail(req) {
+    const cancel = canCancel(req) ? `<button class="danger" data-cancel="${esc(req.request_id)}">Cancel request</button>` :
+      (req.cancel_requested ? '<span class="muted">cancel requested</span>' : "");
+    return `<div class="job"><h3>Request <code>${esc(req.request_id)}</code> ${badge(req.state)} ${cancel}</h3>` +
+      `<div class="meta">snapshot <code>${esc(req.snapshot_sha256)}</code><br>${renderProfile(req.profile)}<br>` +
+      `created ${esc(when(req.created_at))} · updated ${esc(when(req.updated_at))}</div>${renderDelivery(req.delivery)}` +
+      req.jobs.map(j => renderJob(req, j)).join("") + `</div>`;
+  }
+
+  function renderLog(jobId) {
+    const c = logCache[jobId];
+    if (!c) return '<div class="nc">loading…</div>';
+    if (c.error) return `<div class="alert">${esc(c.error)}</div>`;
+    const capped = c.text.length >= LOG_VIEW_MAX ? ` · view capped at ${LOG_VIEW_MAX} bytes` : "";
+    return `<div class="muted">showing ${esc(c.next)} of ${esc(c.stored)} stored bytes${c.truncated ? " · log truncated at the balancer limit" : ""}${capped}</div>` +
+      `<pre>${esc(c.text) || '<span class="nc">(empty)</span>'}</pre>`;
+  }
+
+  // Read the bounded durable log incrementally, only for expanded jobs.
+  async function loadJobLog(requestId, jobId) {
+    const c = logCache[jobId] ||= {text: "", next: 0, stored: 0, truncated: false, eof: false, error: null};
+    if (c.text.length < LOG_VIEW_MAX) {
+      const url = `/test-requests/${encodeURIComponent(requestId)}/log?job_id=${encodeURIComponent(jobId)}` +
+        `&offset=${encodeURIComponent(c.next)}&limit=${LOG_CHUNK}`;
+      try {
+        const r = await fetch(url);
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || d.error || `HTTP ${r.status}`);
+        c.text += d.text || "";
+        c.next = d.next_offset; c.stored = d.stored_bytes; c.truncated = d.truncated; c.eof = d.eof; c.error = null;
+      } catch (err) {
+        c.error = "log unavailable: " + err.message;
+      }
+    }
+    const box = $("log-" + jobId);
+    if (box) box.innerHTML = renderLog(jobId);
+  }
+
+  function showRequestDetail() {
+    const panel = $("request-detail");
+    const req = requests.find(r => r.request_id === selectedRequest);
+    if (!req) { panel.style.display = "none"; return; }
+    panel.style.display = "block";
+    panel.innerHTML = renderRequestDetail(req);
+    for (const j of req.jobs) {
+      if (openLogs.has(j.job_id) && (ACTIVE.has(j.state) || !logCache[j.job_id] || !logCache[j.job_id].eof)) loadJobLog(req.request_id, j.job_id);
+    }
+  }
+
+  async function refreshRequests() {
+    try {
+      const r = await fetch("/test-requests?limit=50");
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      requests = (await r.json()).requests || [];
+      requestsError = null;
+      $("requests-state").textContent = `refreshed every 5 s · last ${new Date().toLocaleTimeString()}`;
+    } catch (err) {
+      requestsError = err.message;
+      $("requests-state").textContent = `refreshed every 5 s · last attempt failed: ${err.message}`;
+    }
+    renderRequests();
+    showRequestDetail();
+  }
+
+  $("test-requests").addEventListener("click", e => {
+    const row = e.target.closest("tr[data-request]");
+    if (!row) return;
+    selectedRequest = row.dataset.request === selectedRequest ? null : row.dataset.request;
+    renderRequests();
+    showRequestDetail();
+  });
+  $("request-detail").addEventListener("toggle", e => {
+    const d = e.target;
+    if (!d.dataset || !d.dataset.logJob) return;
+    if (d.open) { openLogs.add(d.dataset.logJob); loadJobLog(d.dataset.logRequest, d.dataset.logJob); }
+    else openLogs.delete(d.dataset.logJob);
+  }, true);
+  $("request-detail").addEventListener("click", async e => {
+    const b = e.target.closest("button[data-cancel]");
+    if (!b) return;
+    b.disabled = true;
+    try {
+      const r = await fetch(`/test-requests/${encodeURIComponent(b.dataset.cancel)}/cancel`, {method: "POST"});
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    } catch (err) {
+      $("requests-state").textContent = `cancel failed: ${err.message}`;
+    }
+    refreshRequests();
+  });
+
+  // --- live stream (tasks, usage, issues, incidents) -----------------------------------
+  const es = new EventSource("/events");
+  es.onerror = () => { $("conn").className = "down"; $("conn").textContent = "event stream disconnected, retrying"; };
+  es.onmessage = ev => {
+    const d = JSON.parse(ev.data);
+    $("conn").className = "live"; $("conn").textContent = "live";
+    tasks = d.tasks;
+    renderTasks();
+    renderIssues(d.issues || []);
+    $("usage").innerHTML = d.usage.length ? d.usage.map(u => {
+      const pct = Math.min(100, Number(u.pct_used));
+      const reset = u.resets_at ? new Date(u.resets_at * 1000) : null;
+      const resetTxt = reset ? ` · resets ${reset.toLocaleString([], {weekday: u.window === "5h" ? undefined : "short", hour: "2-digit", minute: "2-digit"})}` : "";
+      return `<div class="usage-row"><span class="who">${esc(u.agent)}</span>` +
+        ` <span class="bar ${pct >= 90 ? "hot" : ""}"><span style="width:${esc(pct)}%"></span></span>` +
+        ` ${esc(pct)}% <span class="muted">${esc(resetTxt)}</span></div>`;
+    }).join("") : `<span class="muted">no data</span>`;
+    $("incidents").innerHTML = d.incidents.map(i =>
+      `<li><span class="muted">${esc(i.created_at)}</span> [${esc(i.agent)}] <b>${esc(i.kind)}</b>: ${esc(i.detail)}</li>`).join("") ||
+      '<li class="nc">no incidents</li>';
+    if (selected && !logTimer) refreshDetails();
+  };
+  setInterval(renderTasks, 1000);  // keep running timers ticking between SSE updates
+  refreshRequests();
+  setInterval(refreshRequests, 5000);
+
+  window.A2ADashboard = {refreshRequests, renderRequestDetail, renderIssue, canCancel, loadJobLog};
 </script>
 </body>
 </html>
