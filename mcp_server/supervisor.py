@@ -63,45 +63,70 @@ class SupervisorLock:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._stream = None
         self._locked = False
+        self._owner_thread: int | None = None
+        self._depth = 0
+        self._state_lock = threading.Lock()
 
     def acquire(self) -> bool:
-        if self._locked:
+        owner = threading.get_ident()
+        with self._state_lock:
+            if self._locked:
+                if self._owner_thread != owner:
+                    return False
+                self._depth += 1
+                return True
+            stream = self.path.open("a+b")
+            stream.seek(0, os.SEEK_END)
+            if stream.tell() == 0:
+                stream.write(b"\0")
+                stream.flush()
+            stream.seek(0)
+            try:
+                if IS_WINDOWS:
+                    import msvcrt
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except (OSError, BlockingIOError):
+                stream.close()
+                return False
+            self._stream = stream
+            self._locked = True
+            self._owner_thread = owner
+            self._depth = 1
             return True
-        self._stream = self.path.open("a+b")
-        self._stream.seek(0, os.SEEK_END)
-        if self._stream.tell() == 0:
-            self._stream.write(b"\0")
-            self._stream.flush()
-        self._stream.seek(0)
-        try:
-            if IS_WINDOWS:
-                import msvcrt
-                msvcrt.locking(self._stream.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(self._stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except (OSError, BlockingIOError):
-            self._stream.close()
-            self._stream = None
-            return False
-        self._locked = True
-        return True
 
     def release(self) -> None:
-        if not self._locked or self._stream is None:
-            return
-        try:
-            self._stream.seek(0)
-            if IS_WINDOWS:
-                import msvcrt
-                msvcrt.locking(self._stream.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(self._stream.fileno(), fcntl.LOCK_UN)
-        finally:
-            self._stream.close()
-            self._stream = None
-            self._locked = False
+        owner = threading.get_ident()
+        with self._state_lock:
+            if not self._locked or self._stream is None:
+                return
+            if self._owner_thread != owner:
+                raise RuntimeError("supervisor lock must be released by its owning thread")
+            if self._depth > 1:
+                self._depth -= 1
+                return
+            stream = self._stream
+            try:
+                stream.seek(0)
+                if IS_WINDOWS:
+                    import msvcrt
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+            finally:
+                stream.close()
+                self._stream = None
+                self._locked = False
+                self._owner_thread = None
+                self._depth = 0
+
+    @property
+    def held_by_current_thread(self) -> bool:
+        with self._state_lock:
+            return self._locked and self._owner_thread == threading.get_ident()
 
     def __enter__(self):
         if not self.acquire():
@@ -168,10 +193,16 @@ class SupervisorRuntime:
         self.lock.release()
 
     def spawn(self, attempt_id: str, message_id: str, argv: list[str], cwd: str,
-              env: dict[str, str] | None = None, metadata: dict[str, Any] | None = None
+              env: dict[str, str] | None = None, metadata: dict[str, Any] | None = None,
+              *, memory_limit_mb: int | None = None
               ) -> tuple[subprocess.Popen, dict[str, Any], WindowsJob | None, JobKeeper | None]:
-        if not self.lock._locked:
+        if not self.lock.held_by_current_thread:
             raise RuntimeError("supervisor lock must be held before spawning")
+        if memory_limit_mb is not None:
+            if type(memory_limit_mb) is not int or memory_limit_mb < 1:
+                raise ValueError("memory_limit_mb must be a positive integer")
+            if not IS_WINDOWS:
+                raise RuntimeError("whole-tree memory limits are unsupported on this POSIX runner")
         attempt_dir = self.directory / "attempts" / attempt_id
         attempt_dir.mkdir(parents=True, exist_ok=True)
         stdout_file = (attempt_dir / "stdout.jsonl").open("ab", buffering=0)
@@ -183,7 +214,10 @@ class SupervisorRuntime:
             if IS_WINDOWS:
                 job_name = f"Local\\a2a-link-{self.install_id}-{attempt_id}"
                 job = WindowsJob.create(job_name)
+                keeper = None
                 try:
+                    if memory_limit_mb is not None:
+                        job.set_memory_limit_mb(memory_limit_mb)
                     keeper = start_job_keeper(job_name, self.directory)
                     proc, identity = spawn_suspended(argv, cwd, env or os.environ.copy(), job,
                                                      stdout=stdout_file, stderr=stderr_file)
@@ -211,7 +245,7 @@ class SupervisorRuntime:
 
     def recover(self, attempt_id: str, identity: dict[str, Any], grace_s: float = 0,
                 termination_callback=None) -> str:
-        if not self.lock._locked:
+        if not self.lock.held_by_current_thread:
             raise RuntimeError("supervisor lock must be held before recovery")
         self.journal.append("reattach_started", attempt_id=attempt_id, process_identity=identity)
         return recover_termination(identity, grace_s=grace_s, journal=self.journal,
@@ -445,6 +479,24 @@ if IS_WINDOWS:
                     ("TotalPageFaultCount", wintypes.DWORD), ("TotalProcesses", wintypes.DWORD),
                     ("ActiveProcesses", wintypes.DWORD), ("TotalTerminatedProcesses", wintypes.DWORD)]
 
+    class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [("PerProcessUserTimeLimit", ctypes.c_longlong),
+                    ("PerJobUserTimeLimit", ctypes.c_longlong), ("LimitFlags", wintypes.DWORD),
+                    ("MinimumWorkingSetSize", ctypes.c_size_t), ("MaximumWorkingSetSize", ctypes.c_size_t),
+                    ("ActiveProcessLimit", wintypes.DWORD), ("Affinity", ctypes.c_size_t),
+                    ("PriorityClass", wintypes.DWORD), ("SchedulingClass", wintypes.DWORD)]
+
+    class _IO_COUNTERS(ctypes.Structure):
+        _fields_ = [(name, ctypes.c_ulonglong) for name in (
+            "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+            "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+    class _JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [("BasicLimitInformation", _JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                    ("IoInfo", _IO_COUNTERS), ("ProcessMemoryLimit", ctypes.c_size_t),
+                    ("JobMemoryLimit", ctypes.c_size_t), ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                    ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
 
 class WindowsJob:
     """Named Windows Job Object; no KILL_ON_JOB_CLOSE, so a new supervisor can reopen it."""
@@ -453,6 +505,8 @@ class WindowsJob:
     JOB_OBJECT_TERMINATE = 0x0008
     JOB_OBJECT_ASSIGN_PROCESS = 0x0001
     JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION = 1
+    JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+    JOB_OBJECT_LIMIT_JOB_MEMORY = 0x00000200
 
     def __init__(self, name: str, handle: int):
         self.name, self.handle = name, handle
@@ -493,6 +547,47 @@ class WindowsJob:
         kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
         if not kernel32.AssignProcessToJobObject(wintypes.HANDLE(self.handle), wintypes.HANDLE(process_handle)):
             raise ctypes.WinError(ctypes.get_last_error())
+
+    def _extended_limit_information(self):
+        kernel32 = self._kernel32()
+        kernel32.QueryInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+                                                        wintypes.DWORD, ctypes.c_void_p]
+        kernel32.QueryInformationJobObject.restype = wintypes.BOOL
+        info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        if not kernel32.QueryInformationJobObject(
+                wintypes.HANDLE(self.handle), self.JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+                ctypes.byref(info), ctypes.sizeof(info), None):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return info
+
+    def set_memory_limit_mb(self, memory_limit_mb: int) -> None:
+        """Apply a hard committed-memory limit to the sum of all job processes."""
+        if type(memory_limit_mb) is not int or memory_limit_mb < 1:
+            raise ValueError("memory_limit_mb must be a positive integer")
+        limit = memory_limit_mb * 1024 * 1024
+        if limit > (1 << (ctypes.sizeof(ctypes.c_size_t) * 8)) - 1:
+            raise ValueError("memory_limit_mb is too large for this platform")
+        info = self._extended_limit_information()
+        info.BasicLimitInformation.LimitFlags |= self.JOB_OBJECT_LIMIT_JOB_MEMORY
+        info.JobMemoryLimit = limit
+        kernel32 = self._kernel32()
+        kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+                                                      wintypes.DWORD]
+        kernel32.SetInformationJobObject.restype = wintypes.BOOL
+        if not kernel32.SetInformationJobObject(
+                wintypes.HANDLE(self.handle), self.JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+                ctypes.byref(info), ctypes.sizeof(info)):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+    def memory_limit_mb(self) -> int | None:
+        info = self._extended_limit_information()
+        if not info.BasicLimitInformation.LimitFlags & self.JOB_OBJECT_LIMIT_JOB_MEMORY:
+            return None
+        limit = int(info.JobMemoryLimit)
+        mib = 1024 * 1024
+        if limit % mib:
+            raise RuntimeError("Job Object memory limit is not an exact MiB value")
+        return limit // mib
 
     def active_processes(self) -> int:
         kernel32 = self._kernel32()
