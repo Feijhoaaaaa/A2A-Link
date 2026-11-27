@@ -205,7 +205,7 @@ def test_message_records_profile_source_and_keeps_confirmed_separate(client):
 
 def test_dashboard_shows_the_profile_source(client):
     html = client.get("/dashboard").text
-    assert "profile_source" in html and "żądany" in html and "potwierdzony" in html
+    assert "profile_source" in html and "requested:" in html and "confirmed:" in html
 
 
 def test_profile_source_is_validated_and_part_of_the_message_identity(client):
