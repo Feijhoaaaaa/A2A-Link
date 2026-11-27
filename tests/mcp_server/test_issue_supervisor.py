@@ -2,6 +2,7 @@ import os
 import hashlib
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -33,6 +34,82 @@ def test_supervisor_lock_excludes_another_lock_instance(tmp_path):
     first.release()
     assert second.acquire()
     second.release()
+
+
+def test_supervisor_lock_same_thread_reentrancy_keeps_outer_acquisition(tmp_path):
+    first = SupervisorLock(tmp_path / "supervisor.lock")
+    second = SupervisorLock(tmp_path / "supervisor.lock")
+
+    assert first.acquire()
+    assert first.acquire()
+    first.release()
+    assert not second.acquire()
+    first.release()
+    assert second.acquire()
+    second.release()
+
+
+def test_runtime_lock_does_not_let_a_second_thread_release_first_threads_spawn(tmp_path,
+                                                                               monkeypatch):
+    runtime = SupervisorRuntime(tmp_path / "supervisor")
+    first_has_os_lock = threading.Event()
+    allow_first_acquire_to_return = threading.Event()
+    second_result = []
+    errors = []
+    spawned = []
+    original_lock_acquire = runtime.lock.acquire
+
+    def pause_first_after_lock():
+        acquired = original_lock_acquire()
+        if acquired and threading.current_thread().name == "first-sender":
+            first_has_os_lock.set()
+            if not allow_first_acquire_to_return.wait(5):
+                raise AssertionError("second sender did not finish")
+        return acquired
+
+    monkeypatch.setattr(runtime.lock, "acquire", pause_first_after_lock)
+
+    def first_sender():
+        try:
+            assert runtime.acquire()
+            proc, _, job, keeper = runtime.spawn(
+                "attempt-1", "message-1", [sys.executable, "-c", "pass"], str(tmp_path)
+            )
+            spawned.append(proc)
+            assert proc.wait(timeout=5) == 0
+            if job is not None:
+                assert job.wait_empty(5)
+                job.close()
+            if keeper is not None:
+                keeper.release()
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            runtime.release()
+
+    def second_sender():
+        try:
+            assert first_has_os_lock.wait(5), "first sender never acquired the supervisor lock"
+            acquired = runtime.acquire()
+            second_result.append(acquired)
+            if acquired:
+                runtime.release()
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            allow_first_acquire_to_return.set()
+
+    first = threading.Thread(target=first_sender, name="first-sender")
+    second = threading.Thread(target=second_sender, name="second-sender")
+    first.start()
+    second.start()
+    first.join(timeout=10)
+    second.join(timeout=10)
+
+    assert not first.is_alive() and not second.is_alive()
+    assert second_result == [False]
+    assert errors == []
+    assert len(spawned) == 1
 
 
 def test_runtime_journals_spawn_captures_handle_and_recovers_tree(tmp_path):
@@ -80,10 +157,10 @@ def test_named_job_reopens_and_proves_entire_process_tree(tmp_path):
         "import time\nfrom pathlib import Path\np = Path(" + repr(str(heartbeat)) + ")\n"
         "while True:\n    p.open('a').write('x\\n')\n    time.sleep(0.1)\n"
     )
+    # Keep both descendants alive until the reopened Job Object terminates them.
     child.write_text(
-        "import subprocess, sys, time\n"
-        "subprocess.Popen([sys.executable, " + repr(str(grandchild)) + "])\n"
-        "time.sleep(0.2)\n"
+        "import subprocess, sys\n"
+        "subprocess.run([sys.executable, " + repr(str(grandchild)) + "], check=True)\n"
     )
     parent.write_text(
         "import subprocess, sys, time\n"
@@ -221,3 +298,4 @@ def test_recovery_never_signals_reused_pid_with_live_other_group(tmp_path, monke
     assert proc.poll() is None
     proc.terminate()
     proc.wait(timeout=5)
+

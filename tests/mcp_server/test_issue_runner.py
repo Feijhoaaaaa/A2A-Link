@@ -3,6 +3,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 from mcp_server.issue_runner import IssueRunner, TurnJob
 from mcp_server.supervisor import SupervisorRuntime
 
@@ -46,12 +48,12 @@ class FakeIssueService:
 
 
 class FakeCodexAdapter:
-    def start_argv(self, prompt, profile):
+    def start_argv(self, prompt, profile, participant_context=None):
         script = ("import json; print(json.dumps({'type':'thread.started','thread_id':'thread-1'}),flush=True); "
                   "print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':'finished'}}),flush=True)")
         return [sys.executable, "-c", script]
 
-    def continue_argv(self, handle, prompt, profile):
+    def continue_argv(self, handle, prompt, profile, participant_context=None):
         raise AssertionError("start should be used without a saved handle")
 
 
@@ -80,7 +82,7 @@ def test_runner_stores_reconstructed_handoff_in_durable_start_prompt(tmp_path, m
     captured = {}
 
     class Adapter:
-        def start_argv(self, prompt, profile):
+        def start_argv(self, prompt, profile, participant_context=None):
             captured["prompt"] = prompt
             script = ("import json; print(json.dumps({'type':'system','subtype':'init',"
                       "'session_id':'claude-handoff-1','model':'claude-sonnet-5-5'}),flush=True); "
@@ -221,3 +223,115 @@ def test_turn_does_not_release_keeper_when_cli_leader_exits_before_descendant(tm
     assert service.saved["handle"]["session_id"] == "long-lived"
     assert service.reported["status"] == "failed"
     assert keeper.process.poll() is not None
+
+
+def test_resume_requires_exact_saved_provider_session_id(tmp_path, monkeypatch):
+    import pytest
+
+    worktree_root = tmp_path / "worktrees"
+    cwd = worktree_root / "i-resume-codex"
+    cwd.mkdir(parents=True)
+    monkeypatch.setenv("A2A_LINK_WORKTREE_DIR", str(worktree_root))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
+    service = FakeIssueService(cwd)
+    service.saved_handle = None
+    service.snapshot = lambda _issue_id: {"round": {"id": "r1"}, "participants": {
+        "codex": {"generation": 1, "handle": {"adapter_type": "codex",
+            "session_id": "saved-thread", "cwd": str(cwd), "generation": 1}}}}
+
+    captured = {}
+
+    class ResumeAdapter:
+        def continue_argv(self, handle, prompt, profile, participant_context=None):
+            assert handle.session_id == "saved-thread"
+            captured.update(participant_context)
+            script = ("import json; print(json.dumps({'type':'thread.started','thread_id':'new-thread'}),flush=True); "
+                      "print(json.dumps({'type':'turn.completed','usage':{}}),flush=True)")
+            return [sys.executable, "-c", script]
+
+        def start_argv(self, *args):
+            raise AssertionError("saved session must be resumed")
+
+    runner = IssueRunner(service, SupervisorRuntime(tmp_path / "supervisor"))
+    runner.adapters["codex"] = ResumeAdapter()
+    result = runner.send("i-resume", "codex", "continue", "feature", wait_s=10)
+
+    assert result["status"] == "failed"
+    assert service.saved_handle is None
+    assert service.reported_result["status"] == "failed"
+    assert "session_id_mismatch" in service.reported_result["error"]
+    assert captured["issue_id"] == "i-resume"
+    assert captured["participant"] == "codex"
+    assert captured["generation"] == 1
+    assert captured["origin_attempt_id"] == "a1"
+    assert captured["origin_message_id"]
+    assert captured["cwd"] == str(cwd.resolve())
+    assert captured["requested_profile"] == {"model": "gpt-6-luna", "effort": "low"}
+    assert "session_id" not in captured
+
+
+@pytest.mark.parametrize("participant,event", [
+    ("codex", {"type": "turn.completed", "usage": {}}),
+    ("claude", {"type": "result", "result": "done"}),
+    ("claude", {"type": "system", "subtype": "init", "session_id": "other"}),
+])
+def test_resume_missing_or_mismatched_session_id_fails_without_replacement(
+        tmp_path, monkeypatch, participant, event):
+    worktree_root = tmp_path / "worktrees"
+    cwd = worktree_root / f"i-resume-{participant}"
+    cwd.mkdir(parents=True)
+    monkeypatch.setenv("A2A_LINK_WORKTREE_DIR", str(worktree_root))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
+    service = FakeIssueService(cwd)
+    service.saved_handle = None
+    service.snapshot = lambda _issue_id: {"round": {"id": "r1"}, "participants": {
+        participant: {"generation": 3, "handle": {"adapter_type": participant,
+            "session_id": "saved-session", "cwd": str(cwd), "generation": 3}}}}
+
+    class ResumeAdapter:
+        def continue_argv(self, handle, prompt, profile, participant_context=None):
+            code = "import json; print(" + repr(json.dumps(event)) + ",flush=True)"
+            return [sys.executable, "-c", code]
+
+        def start_argv(self, *args):
+            raise AssertionError("saved session must be resumed")
+
+    runner = IssueRunner(service, SupervisorRuntime(tmp_path / "supervisor"))
+    runner.adapters[participant] = ResumeAdapter()
+    result = runner.send("i-resume", participant, "continue", "feature", wait_s=10)
+
+    assert result["status"] == "failed"
+    assert service.saved_handle is None
+    assert service.reported_result["status"] == "failed"
+    assert "session_id" in service.reported_result["error"]
+
+
+@pytest.mark.parametrize("participant,event", [
+    ("codex", {"type": "thread.started", "thread_id": "saved-session"}),
+    ("claude", {"type": "system", "subtype": "init", "session_id": "saved-session"}),
+])
+def test_resume_accepts_same_provider_session_id(tmp_path, monkeypatch, participant, event):
+    worktree_root = tmp_path / "worktrees"
+    cwd = worktree_root / f"i-resume-{participant}"
+    cwd.mkdir(parents=True)
+    monkeypatch.setenv("A2A_LINK_WORKTREE_DIR", str(worktree_root))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
+    service = FakeIssueService(cwd)
+    service.snapshot = lambda _issue_id: {"round": {"id": "r1"}, "participants": {
+        participant: {"generation": 3, "handle": {"adapter_type": participant,
+            "session_id": "saved-session", "cwd": str(cwd), "generation": 3}}}}
+
+    class ResumeAdapter:
+        def continue_argv(self, handle, prompt, profile, participant_context=None):
+            return [sys.executable, "-c", "import json; print(" + repr(json.dumps(event)) + ",flush=True)"]
+
+        def start_argv(self, *args):
+            raise AssertionError("saved session must be resumed")
+
+    runner = IssueRunner(service, SupervisorRuntime(tmp_path / "supervisor"))
+    runner.adapters[participant] = ResumeAdapter()
+    result = runner.send("i-resume", participant, "continue", "feature", wait_s=10)
+
+    assert result["status"] == "done"
+    assert service.saved_handle is None
+    assert service.reported_result["status"] == "done"
