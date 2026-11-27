@@ -15,6 +15,7 @@ from mcp_server.delegate import DelegationManager
 from mcp_server.issue_service import IssueService
 from mcp_server.issue_runner import IssueRunner
 from mcp_server.supervisor import SupervisorRuntime
+from balancer.updater import UpdateError, update_installation
 from mcp_server.terminal.executor import TerminalExecutor
 from mcp_server.terminal.policy import Level, PolicyError, evaluate, load_policy
 
@@ -129,6 +130,20 @@ def build_server(policy_path: str | None = None) -> MCPServer:
     server = MCPServer("a2a-link")
     server.tool()(delegate_to_claude)
     server.tool()(delegate_to_codex)
+
+    @server.tool(annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True))
+    def update_a2a_link() -> dict:
+        """Na wyraźną prośbę użytkownika pobierz i zainstaluj update z oficjalnego GitHuba.
+
+        Odmawia aktualizacji brudnego checkoutu, innej gałęzi i nieoficjalnego origin.
+        Po sukcesie balancer, runner i klienci MCP wymagają restartu.
+        """
+        try:
+            return update_installation()
+        except UpdateError as exc:
+            return {"status": "blocked", "error": str(exc)}
+
+    server.tool()(update_a2a_link)
     read_only = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
     server.tool(annotations=read_only)(get_delegation_result)
     server.tool(annotations=read_only)(get_delegation_log)
