@@ -12,6 +12,18 @@ Stop the balancer and test runner, close Claude Code and Codex, and save any wor
 
 The checkout must be clean, on `main`, and have `origin` set to `https://github.com/Feijhoaaaaa/A2A-Link` (SSH URLs for that same repository are also accepted). The updater refuses local changes, other branches, or a different origin.
 
+If you installed 2.1.0 from its `release/a2a-link-2.1.0-clean` branch, switch this clean checkout to the current `main` once before using the updater. Preserve or commit any local changes first. On Windows (PowerShell):
+
+```powershell
+git status --short
+git fetch origin
+git switch main
+git pull --ff-only origin main
+& .\.venv\Scripts\python.exe -m pip install -e ".[test]"
+```
+
+If the clone has no local `main` branch, use `git switch --track -c main origin/main` instead of `git switch main`. On Linux or macOS, use the same Git commands and reinstall with `.venv/bin/python -m pip install -e '.[test]'`. Keep the old release branch; the switch does not delete it.
+
 Windows (PowerShell), from the existing clone:
 
 ```powershell
