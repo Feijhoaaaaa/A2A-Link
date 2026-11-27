@@ -22,8 +22,8 @@ import httpx
 from balancer.tasklog import TaskLog, fmt_elapsed, read_tail
 from mcp_server.balancer_startup import ensure_balancer
 from mcp_server.cli_executor import run_cli_task
-from mcp_server.progress import (claude_result, claude_usage, codex_last_message, format_claude_event,
-                                 format_codex_event, parse_event, repair_mojibake)
+from mcp_server.progress import (claude_result, claude_usage, claude_weekly_usage, codex_last_message,
+                                 format_claude_event, format_codex_event, parse_event, repair_mojibake)
 from mcp_server.worktree import Workspace, finalize, prepare
 
 DEPTH_ENV = "A2A_LINK_DELEGATION_DEPTH"
@@ -221,8 +221,9 @@ class DelegationManager:
                 log.write(repair_mojibake(line))
                 return
             usage = claude_usage(event)
-            if usage:
-                self._report_usage(job.agent, *usage)
+            weekly_usage = claude_weekly_usage(event)
+            if usage or weekly_usage:
+                self._report_usage(job.agent, usage, weekly_usage)
             for text in formatter(event):
                 log.write(text)
         return on_line
@@ -286,13 +287,21 @@ class DelegationManager:
         except httpx.HTTPError:
             pass  # the in-memory job still carries the outcome
 
-    def _report_usage(self, agent: str, pct: float, resets_at: float) -> None:
-        started = (datetime.fromtimestamp(resets_at - 5 * 3600, timezone.utc).isoformat()
-                   if resets_at else datetime.now(timezone.utc).isoformat())
+    def _report_usage(self, agent: str, usage: tuple[float, float] | None,
+                      weekly_usage: tuple[float, float] | None = None) -> None:
+        payload = {"agent": agent}
+        if usage is not None:
+            pct, resets_at = usage
+            started = (datetime.fromtimestamp(resets_at - 5 * 3600, timezone.utc).isoformat()
+                       if resets_at else datetime.now(timezone.utc).isoformat())
+            payload.update(pct_used=min(100.0, max(0.0, pct)), window_started_at=started)
+        if weekly_usage is not None:
+            weekly_pct, weekly_resets_at = weekly_usage
+            payload.update(weekly_pct_used=min(100.0, max(0.0, weekly_pct)),
+                           weekly_resets_at=weekly_resets_at or None)
         try:
             with self._client() as c:
-                c.post("/usage", json={"agent": agent, "pct_used": min(100.0, max(0.0, pct)),
-                                       "window_started_at": started})
+                c.post("/usage", json=payload)
         except httpx.HTTPError:
             pass
 

@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+import sys
+from pathlib import Path
 from typing import Any
 
 
@@ -16,25 +19,31 @@ class SessionHandle:
 class CodexAdapter:
     adapter_type = "codex"
 
-    def start_argv(self, prompt: str, profile: dict[str, Any] | None = None) -> list[str]:
-        return [
-            "codex", "exec", "--json", "-s", "workspace-write",
-            "-c", "mcp_servers.a2a-link.enabled=false",
-            *self._profile_args(profile), prompt,
-        ]
+    def start_argv(self, prompt: str, profile: dict[str, Any] | None = None,
+                   participant_context: dict[str, Any] | None = None) -> list[str]:
+        argv = ["codex", "exec", "--json", "-s", "workspace-write"]
+        if participant_context is None:
+            argv.extend(("-c", "mcp_servers.a2a-link.enabled=false"))
+        else:
+            argv.extend(("--ignore-user-config", "-c",
+                         "mcp_servers={a2a_link=" + _codex_mcp_server(participant_context) + "}"))
+        return [*argv, *self._profile_args(profile), prompt]
 
     def continue_argv(self, handle: SessionHandle, prompt: str,
-                      profile: dict[str, Any] | None = None) -> list[str]:
+                      profile: dict[str, Any] | None = None,
+                      participant_context: dict[str, Any] | None = None) -> list[str]:
         if handle.adapter_type != self.adapter_type:
             raise ValueError(f"cannot resume {handle.adapter_type!r} with codex adapter")
         if not handle.session_id.strip():
             raise ValueError("Codex session id is required to resume")
-        return [
-            "codex", "exec", "resume", handle.session_id, "--json",
-            "-c", 'sandbox_mode="workspace-write"',
-            "-c", "mcp_servers.a2a-link.enabled=false",
-            *self._profile_args(profile), prompt,
-        ]
+        argv = ["codex", "exec", "resume", handle.session_id, "--json",
+                "-c", 'sandbox_mode="workspace-write"']
+        if participant_context is None:
+            argv.extend(("-c", "mcp_servers.a2a-link.enabled=false"))
+        else:
+            argv.extend(("--ignore-user-config", "-c",
+                         "mcp_servers={a2a_link=" + _codex_mcp_server(participant_context) + "}"))
+        return [*argv, *self._profile_args(profile), prompt]
 
     @staticmethod
     def _profile_args(profile: dict[str, Any] | None) -> list[str]:
@@ -60,20 +69,35 @@ class CodexAdapter:
 class ClaudeAdapter:
     adapter_type = "claude"
 
-    def start_argv(self, prompt: str, profile: dict[str, Any] | None = None) -> list[str]:
-        return ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose",
-                "--permission-mode", "acceptEdits", "--strict-mcp-config",
-                *self._profile_args(profile)]
+    def start_argv(self, prompt: str, profile: dict[str, Any] | None = None,
+                   participant_context: dict[str, Any] | None = None) -> list[str]:
+        argv = ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose",
+                "--permission-mode", "acceptEdits", "--strict-mcp-config"]
+        if participant_context is not None:
+            argv.extend(("--mcp-config", json.dumps(
+                {"mcpServers": {"a2a_link": _claude_mcp_server(participant_context)}},
+                separators=(",", ":"))))
+            argv.extend(("--allowedTools", "mcp__a2a_link__start_tests",
+                         "mcp__a2a_link__get_test_request"))
+        return [*argv, *self._profile_args(profile)]
 
     def continue_argv(self, handle: SessionHandle, prompt: str,
-                      profile: dict[str, Any] | None = None) -> list[str]:
+                      profile: dict[str, Any] | None = None,
+                      participant_context: dict[str, Any] | None = None) -> list[str]:
         if handle.adapter_type != self.adapter_type:
             raise ValueError(f"cannot resume {handle.adapter_type!r} with Claude adapter")
         if not handle.session_id.strip():
             raise ValueError("Claude session id is required to resume")
-        return ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose",
+        argv = ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose",
                 "--permission-mode", "acceptEdits", "--strict-mcp-config",
-                "--resume", handle.session_id, *self._profile_args(profile)]
+                "--resume", handle.session_id]
+        if participant_context is not None:
+            argv.extend(("--mcp-config", json.dumps(
+                {"mcpServers": {"a2a_link": _claude_mcp_server(participant_context)}},
+                separators=(",", ":"))))
+            argv.extend(("--allowedTools", "mcp__a2a_link__start_tests",
+                         "mcp__a2a_link__get_test_request"))
+        return [*argv, *self._profile_args(profile)]
 
     @staticmethod
     def _profile_args(profile: dict[str, Any] | None) -> list[str]:
@@ -94,6 +118,38 @@ class ClaudeAdapter:
             return None
         session_id = event.get("session_id")
         return session_id.strip() if isinstance(session_id, str) and session_id.strip() else None
+
+
+def _participant_mcp_env(context: dict[str, Any]) -> dict[str, str]:
+    return {"A2A_LINK_PARTICIPANT_CONTEXT": json.dumps(context, separators=(",", ":")),
+            "A2A_LINK_BALANCER_URL": context.get("balancer_url", "http://127.0.0.1:8000"),
+            "A2A_LINK_HOME": context["link_home"],
+            "A2A_LINK_WORKTREE_DIR": context.get(
+                "worktree_root", str(Path(context["cwd"]).parent))}
+
+
+def _claude_mcp_server(context: dict[str, Any]) -> dict[str, Any]:
+    return {"type": "stdio", "command": sys.executable,
+            "args": ["-m", "mcp_server.participant_server"],
+            "env": _participant_mcp_env(context)}
+
+
+def _toml_string(value: str) -> str:
+    # JSON basic strings are valid TOML basic strings for these context values.
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _codex_mcp_server(context: dict[str, Any]) -> str:
+    env = _participant_mcp_env(context)
+    env_values = ",".join(f"{key}={_toml_string(value)}" for key, value in env.items())
+    args = ["-m", "mcp_server.participant_server"]
+    args_value = ",".join(_toml_string(value) for value in args)
+    tools = ("{start_tests={approval_mode=\"approve\"},"
+             "get_test_request={approval_mode=\"approve\"}}")
+    return ("{command=" + _toml_string(sys.executable) + ",args=[" + args_value +
+            "],env={" + env_values + "},enabled=true,"
+            "enabled_tools=[\"start_tests\",\"get_test_request\"],"
+            "default_tools_approval_mode=\"prompt\",tools=" + tools + "}")
 
 
 def parse_codex_events(events: list[dict[str, Any]],
