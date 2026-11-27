@@ -1,6 +1,6 @@
 {
   "_comment": "Copy OUTSIDE allowed_roots (e.g. %USERPROFILE%/.a2a_link/terminal-policy.json; not %APPDATA%, which MSIX apps like Codex may redirect) and point A2A_LINK_POLICY at it. Levels: safe | confirm | deny. Anything not listed is denied.",
-  "allowed_roots": ["C:/path/to/your/project"],
+  "allowed_roots": ["C:/Code/A2A_Link"],
   "audit_log": "C:/Users/YOU/.a2a_link/terminal-audit.jsonl",
   "default_timeout_s": 60,
   "max_timeout_s": 600,
@@ -26,6 +26,7 @@
       ]
     },
     "python": {
+      "path": "C:/Code/A2A_Link/.venv/Scripts/python.exe",
       "default": "deny",
       "rules": [
         { "prefix": ["-m", "pytest"], "level": "safe" },

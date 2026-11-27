@@ -1,0 +1,41 @@
+{
+  "_comment": "Snapshots capture tracked working-tree changes and non-ignored untracked files. Defaults exclude virtual environments, build output and caches. 'exclude' adds glob patterns matched against individual names or project-relative paths. 'include' can select ignored fixtures using portable, project-relative paths with '/' separators. Credentials, .git, local settings and configured policy files stay excluded for every profile. 'max_bytes' limits the entire uncompressed tar including headers and padding, with a default of 1 GiB.",
+  "_resources": "'parallelism' is \"auto\" (default: every logical CPU the runner may use) or a positive integer. The runner always sets CMAKE_BUILD_PARALLEL_LEVEL, MAKEFLAGS=-jN, CARGO_BUILD_JOBS and OMP_NUM_THREADS to that value, overriding inherited and profile env. Framework flags are never guessed from argv: list them in 'parallelism_args', which is appended to argv with {jobs} (the only placeholder) replaced by the resolved value. 'memory_limit_mb' is unset by default (uncapped); a cap is enforced for the whole process tree only where the runner supports it (Windows Job Objects), and a capped job is rejected before download on runners that cannot enforce it, such as Linux in this release. Each result reports 'resources': {parallelism, parallel_args_applied (the exact appended tokens), memory_limit_mb, memory_limit_enforced (true: cap installed for the whole tree; false: requested but rejected; null: no cap requested)}.",
+  "profiles": {
+    "python-pytest": {
+      "argv": ["python", "-m", "pytest", "-q"],
+      "snapshot": {
+        "exclude": ["*.sqlite3", "docs/generated"],
+        "include": [],
+        "policy_files": ["config/terminal-policy.json"]
+      }
+    },
+    "python-pytest-xdist": {
+      "argv": ["python", "-m", "pytest", "-q"],
+      "parallelism": "auto",
+      "parallelism_args": ["-n", "{jobs}"],
+      "snapshot": {
+        "exclude": ["*.sqlite3", "docs/generated"],
+        "include": [],
+        "policy_files": ["config/terminal-policy.json"]
+      }
+    },
+    "cargo-test": {
+      "argv": ["cargo", "test"],
+      "parallelism": "auto",
+      "parallelism_args": ["--", "--test-threads={jobs}"]
+    },
+    "ctest": {
+      "argv": ["ctest", "--test-dir", "build", "--output-on-failure"],
+      "parallelism": 4,
+      "parallelism_args": ["--parallel", "{jobs}"]
+    },
+    "node-test": {
+      "argv": ["npm", "test"],
+      "snapshot": {
+        "exclude": ["coverage"],
+        "include": ["test/fixtures/generated/sample.json"]
+      }
+    }
+  }
+}
