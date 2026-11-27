@@ -26,6 +26,18 @@ def test_init_schema_creates_all_tables(conn):
     assert {"tasks", "usage", "capabilities", "incidents"} <= names
 
 
+def test_init_schema_adds_weekly_usage_columns_to_existing_database(tmp_path):
+    conn = get_connection(str(tmp_path / "legacy.db"))
+    conn.execute("CREATE TABLE usage (agent TEXT PRIMARY KEY, window_started_at TEXT, pct_used REAL)")
+    conn.execute("INSERT INTO usage VALUES ('claude', '2026-11-22T08:00:00', 41.0)")
+
+    init_schema(conn)
+
+    row = get_usage(conn, "claude")
+    assert row["pct_used"] == 41.0
+    assert row["weekly_pct_used"] is None and row["weekly_resets_at"] is None
+
+
 def test_claim_task_is_atomic_only_one_wins(conn):
     add_task(conn, "t1", "do thing", "claude/high")
     assert claim_task(conn, "t1", "claude") is True
@@ -46,6 +58,17 @@ def test_report_usage_upserts(conn):
     report_usage(conn, "claude", 90.0, "2026-11-22T08:00:00")
     report_usage(conn, "claude", 95.0, "2026-11-22T08:00:00")
     assert get_usage(conn, "claude")["pct_used"] == 95.0
+
+
+def test_report_usage_keeps_weekly_window_when_updating_five_hour_window(conn):
+    report_usage(conn, "claude", 62.0, "five-hour-start", weekly_pct_used=38.0,
+                 weekly_resets_at=1795932310.0)
+    report_usage(conn, "claude", 66.0, "next-five-hour-start")
+
+    row = get_usage(conn, "claude")
+    assert row["pct_used"] == 66.0
+    assert row["weekly_pct_used"] == 38.0
+    assert row["weekly_resets_at"] == 1795932310.0
 
 
 def test_capability_round_trip(conn):

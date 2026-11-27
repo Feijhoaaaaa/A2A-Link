@@ -59,3 +59,20 @@ def test_dashboard_usage_includes_codex_and_feeds_the_router(_isolated_a2a_home,
     assert usage["codex (7 dni)"]["pct_used"] == 3.0
     # 91% is over the 90% ceiling, so new tasks are suggested for claude, not codex
     assert client.post("/tasks", json={"description": "x"}).json()["agent"] == "claude"
+
+
+def test_claude_weekly_usage_round_trips_without_a_five_hour_window(tmp_path):
+    client = TestClient(create_app(str(tmp_path / "weekly.db")))
+    assert client.post("/usage", json={"agent": "claude", "weekly_pct_used": 38.0,
+                                       "weekly_resets_at": 1795932310.0}).status_code == 200
+
+    usage = {row["agent"]: row for row in client.get("/usage").json()}
+    assert usage["claude (7d)"]["pct_used"] == 38.0
+    assert usage["claude (7d)"]["window"] == "7d"
+    assert usage["claude (7d)"]["resets_at"] == 1795932310.0
+
+    assert client.post("/usage", json={"agent": "claude", "pct_used": 62.0,
+                                       "window_started_at": "2026-11-22T08:00:00"}).status_code == 200
+    usage = {row["agent"]: row for row in client.get("/usage").json()}
+    assert usage["claude"]["pct_used"] == 62.0
+    assert usage["claude (7d)"]["pct_used"] == 38.0
