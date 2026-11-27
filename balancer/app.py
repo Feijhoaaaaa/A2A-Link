@@ -4,6 +4,7 @@ import os
 import threading
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Callable, Literal
@@ -19,6 +20,7 @@ from balancer.codex_usage import codex_windows
 from balancer.tasklog import read_tail
 from balancer.db import get_connection, init_schema, write_tx
 from balancer.router import ProfileError, choose_agent, resolve_profile
+from balancer.test_jobs_api import TrustBoundaryMiddleware, register_test_job_routes
 
 DEFAULT_AGENTS = ["claude", "codex"]
 STATIC_DIR = Path(__file__).parent / "static"
@@ -50,8 +52,18 @@ class IncidentIn(BaseModel):
 
 class UsageIn(BaseModel):
     agent: str
-    pct_used: float = Field(ge=0, le=100)
-    window_started_at: str
+    pct_used: float | None = Field(default=None, ge=0, le=100)
+    window_started_at: str | None = None
+    weekly_pct_used: float | None = Field(default=None, ge=0, le=100)
+    weekly_resets_at: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def has_usage_window(self):
+        if self.pct_used is None and self.weekly_pct_used is None:
+            raise ValueError("at least one usage window is required")
+        if (self.pct_used is None) != (self.window_started_at is None):
+            raise ValueError("pct_used and window_started_at must be provided together")
+        return self
 
 
 class CapabilitiesIn(BaseModel):
@@ -280,7 +292,7 @@ def _task_full(row) -> dict:
 
 def create_app(db_path: str, agents: list[str] | None = None, *,
                clock: Callable[[], datetime] | None = None,
-               attempt_ttl_s: int | None = None) -> FastAPI:
+               attempt_ttl_s: int | None = None, test_job_store=None) -> FastAPI:
     read_codex_usage = os.environ.get("A2A_LINK_READ_CODEX_USAGE", "1") != "0"
     agents = agents or DEFAULT_AGENTS
     clock = clock or (lambda: datetime.now(timezone.utc))
@@ -289,15 +301,27 @@ def create_app(db_path: str, agents: list[str] | None = None, *,
     conn = get_connection(db_path)
     init_schema(conn)
     lock = threading.Lock()
-    app = FastAPI(title="A2A_Link balancer")
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        with write_tx(db_path) as recovery_conn:
+            repo.reconcile_expired_test_job_leases(recovery_conn, repo.ts(clock()))
+        yield
+
+    app = FastAPI(title="A2A_Link balancer", lifespan=lifespan)
+    # Only runner routes may be reached from the tailnet; everything else is direct loopback.
+    app.add_middleware(TrustBoundaryMiddleware)
 
     @app.exception_handler(repo.ApiError)
     async def _api_error(request: Request, exc: repo.ApiError):
-        return JSONResponse(exc.body(), status_code=exc.status)
+        # RFC 9110: a 401 names the scheme the client must use (runner/admin bearer tokens).
+        headers = {"WWW-Authenticate": "Bearer"} if exc.status == 401 else None
+        return JSONResponse(exc.body(), status_code=exc.status, headers=headers)
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, exc: RequestValidationError):
-        if request.url.path.startswith(("/issues", "/profiles")):
+        if request.url.path.startswith(("/issues", "/profiles", "/test-snapshots", "/test-requests",
+                                        "/test-jobs", "/test-deliveries", "/runners")):
             return JSONResponse({"error": "validation_error", "detail": "invalid request body",
                                  "errors": json.loads(json.dumps(exc.errors(), default=str))},
                                 status_code=422)
@@ -319,7 +343,7 @@ def create_app(db_path: str, agents: list[str] | None = None, *,
         return JSONResponse(body, status_code=status)
 
     def usage_view() -> list[dict]:
-        """5h/weekly windows: Codex from its session files, others as reported to /usage."""
+        """Usage windows: Codex from session files, Claude from rate-limit events."""
         codex = codex_windows() if read_codex_usage else []
         with lock:
             for w in codex:
@@ -329,12 +353,20 @@ def create_app(db_path: str, agents: list[str] | None = None, *,
                     repo.report_usage(conn, "codex", w["pct_used"], started)
             rows = []
             for r in repo.list_usage(conn):
-                row = {"agent": r["agent"], "window": "5h", "pct_used": r["pct_used"], "resets_at": None}
-                try:
-                    row["resets_at"] = datetime.fromisoformat(r["window_started_at"]).timestamp() + 5 * 3600
-                except (TypeError, ValueError):
-                    pass
-                rows.append(row)
+                if r["pct_used"] is not None:
+                    row = {"agent": r["agent"], "window": "5h", "pct_used": r["pct_used"],
+                           "resets_at": None}
+                    try:
+                        row["resets_at"] = datetime.fromisoformat(r["window_started_at"]).timestamp() + 5 * 3600
+                    except (TypeError, ValueError):
+                        pass
+                    rows.append(row)
+                if r["weekly_pct_used"] is not None:
+                    weekly_pct = r["weekly_pct_used"]
+                    if r["weekly_resets_at"] and r["weekly_resets_at"] < time.time():
+                        weekly_pct = 0.0
+                    rows.append({"agent": f'{r["agent"]} (7d)', "window": "7d",
+                                 "pct_used": weekly_pct, "resets_at": r["weekly_resets_at"]})
         by_agent = {r["agent"]: r for r in rows}
         for w in codex:
             by_agent[w["agent"]] = {k: w[k] for k in ("agent", "window", "pct_used", "resets_at")}
@@ -435,7 +467,8 @@ def create_app(db_path: str, agents: list[str] | None = None, *,
     @app.post("/usage")
     def usage(body: UsageIn):
         with lock:
-            repo.report_usage(conn, body.agent, body.pct_used, body.window_started_at)
+            repo.report_usage(conn, body.agent, body.pct_used, body.window_started_at,
+                              body.weekly_pct_used, body.weekly_resets_at)
         return {"ok": True}
 
     @app.put("/agents/{agent}/capabilities")
@@ -444,7 +477,7 @@ def create_app(db_path: str, agents: list[str] | None = None, *,
             repo.set_capabilities(conn, agent, body.capabilities)
         return {"ok": True}
 
-    # --- issue MVP (v2): see docs/specs/2026-11-24-issue-mvp-api.md ---------------------
+    # --- issue coordination API --------------------------------------------------------
 
     def _root() -> str:
         return os.environ.get("A2A_LINK_HOME") or str(Path.home() / ".a2a_link")
@@ -579,6 +612,9 @@ def create_app(db_path: str, agents: list[str] | None = None, *,
     @app.post("/issues/{issue_id}/close")
     def issues_close(issue_id: str, body: CloseIn):
         return run(lambda c, now, lease: repo.close_issue(c, now, issue_id, body.model_dump()))
+
+    # --- background test jobs ----------------------------------------------------------
+    register_test_job_routes(app, db_path, store=test_job_store)
 
     @app.get("/dashboard", response_class=HTMLResponse)
     def dashboard():

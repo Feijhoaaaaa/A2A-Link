@@ -3,6 +3,8 @@ import os
 import click
 import httpx
 
+from balancer.updater import UpdateError, update_installation
+
 
 def _base_url() -> str:
     return os.environ.get("A2A_LINK_BALANCER_URL", "http://127.0.0.1:8000")
@@ -49,6 +51,21 @@ def issues():
         click.echo(f"needs_human {t['id']}: {t['description']} — {t['error']}")
     for i in incidents:
         click.echo(f"incident #{i['id']} [{i['agent']}] {i['kind']}: {i['detail']}")
+
+
+@main.command("update")
+def update():
+    """Pobierz aktualizację z oficjalnego GitHuba i zainstaluj ją w tym środowisku."""
+    try:
+        result = update_installation()
+    except UpdateError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if result["status"] == "up_to_date":
+        click.echo(f"A2A-Link {result['to_version']} is already up to date.")
+        return
+    click.echo(f"Updated A2A-Link {result['from_version']} → {result['to_version']}.")
+    click.echo("Restart the balancer, runner, and MCP clients to load the update.")
 
 
 if __name__ == "__main__":
