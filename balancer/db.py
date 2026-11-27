@@ -17,7 +17,9 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE TABLE IF NOT EXISTS usage (
     agent TEXT PRIMARY KEY,
     window_started_at TEXT,
-    pct_used REAL
+    pct_used REAL,
+    weekly_pct_used REAL,
+    weekly_resets_at REAL
 );
 CREATE TABLE IF NOT EXISTS capabilities (
     agent TEXT,
@@ -210,6 +212,95 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_integrations_one_active
     ON integrations (issue_id) WHERE state IN ('merging', 'testing', 'tested', 'advancing');
 """
 
+TEST_JOB_SCHEMA = """
+CREATE TABLE IF NOT EXISTS test_requests (
+    request_id TEXT PRIMARY KEY NOT NULL,
+    request_hash TEXT NOT NULL,
+    snapshot_sha256 TEXT NOT NULL,
+    profile TEXT NOT NULL,
+    session_ref TEXT NOT NULL,
+    cancel_requested_at TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS test_runners (
+    runner_id TEXT PRIMARY KEY NOT NULL,
+    token_sha256 TEXT NOT NULL UNIQUE,
+    labels TEXT NOT NULL,
+    platform TEXT NOT NULL CHECK (platform IN ('windows', 'linux')),
+    created_at TEXT NOT NULL,
+    rotated_at TEXT,
+    last_seen_at TEXT
+);
+CREATE TABLE IF NOT EXISTS test_snapshots (
+    sha256 TEXT PRIMARY KEY NOT NULL,
+    byte_count INTEGER NOT NULL CHECK (byte_count >= 0),
+    storage_key TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS test_jobs (
+    job_id TEXT PRIMARY KEY NOT NULL,
+    request_id TEXT NOT NULL REFERENCES test_requests (request_id),
+    target_index INTEGER NOT NULL,
+    target TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (
+        state IN ('queued', 'preparing', 'running', 'succeeded', 'failed', 'cancelled', 'lost')
+    ),
+    runner_id TEXT,
+    lease_token TEXT,
+    lease_s INTEGER,
+    lease_expires_at TEXT,
+    cancel_requested INTEGER NOT NULL DEFAULT 0,
+    log_received_bytes INTEGER NOT NULL DEFAULT 0,
+    log_stored_bytes INTEGER NOT NULL DEFAULT 0,
+    log_truncated INTEGER NOT NULL DEFAULT 0,
+    log_last_chunk_offset INTEGER,
+    log_last_chunk_length INTEGER,
+    log_last_chunk_sha256 TEXT,
+    result TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (request_id, target_index)
+);
+CREATE INDEX IF NOT EXISTS idx_test_jobs_queued ON test_jobs (created_at)
+    WHERE state = 'queued';
+CREATE INDEX IF NOT EXISTS idx_test_jobs_lease ON test_jobs (lease_expires_at)
+    WHERE state IN ('preparing', 'running');
+CREATE UNIQUE INDEX IF NOT EXISTS idx_test_jobs_runner_slot ON test_jobs (runner_id)
+    WHERE state IN ('preparing', 'running', 'lost');
+CREATE TABLE IF NOT EXISTS test_job_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL REFERENCES test_jobs (job_id),
+    state TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_test_job_events_job ON test_job_events (job_id);
+-- One result delivery per request. There is deliberately no state column: delivery
+-- state is read from the messages row that uses message_id, so it commits with the turn.
+CREATE TABLE IF NOT EXISTS test_deliveries (
+    request_id TEXT PRIMARY KEY NOT NULL REFERENCES test_requests (request_id),
+    message_id TEXT NOT NULL UNIQUE,
+    issue_id TEXT NOT NULL,
+    pkey TEXT NOT NULL,
+    generation INTEGER NOT NULL,
+    origin_attempt_id TEXT NOT NULL,
+    request_state TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS trg_test_jobs_created AFTER INSERT ON test_jobs
+BEGIN
+    INSERT INTO test_job_events (job_id, state, created_at)
+    VALUES (NEW.job_id, NEW.state, NEW.created_at);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_test_jobs_state_changed AFTER UPDATE OF state ON test_jobs
+    WHEN OLD.state <> NEW.state
+BEGIN
+    INSERT INTO test_job_events (job_id, state, created_at)
+    VALUES (NEW.job_id, NEW.state, NEW.updated_at);
+END;
+"""
+
 
 def get_connection(path: str) -> sqlite3.Connection:
     # isolation_level=None: autocommit; each statement is its own transaction,
@@ -217,7 +308,15 @@ def get_connection(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA foreign_keys=ON")
     return conn
+
+
+def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    for name, definition in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
@@ -230,6 +329,10 @@ def init_schema(conn: sqlite3.Connection) -> None:
     cols = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
     if "result" not in cols:
         conn.execute("ALTER TABLE tasks ADD COLUMN result TEXT")
+    _ensure_columns(conn, "usage", {
+        "weekly_pct_used": "REAL",
+        "weekly_resets_at": "REAL",
+    })
     conn.executescript(ISSUE_SCHEMA)
     # Databases created before profile resolution have no profile_source column.
     msg_cols = {r[1] for r in conn.execute("PRAGMA table_info(messages)")}
@@ -238,29 +341,47 @@ def init_schema(conn: sqlite3.Connection) -> None:
     generation_cols = {r[1] for r in conn.execute("PRAGMA table_info(generation_log)")}
     if "handoff" not in generation_cols:
         conn.execute("ALTER TABLE generation_log ADD COLUMN handoff TEXT")
+    conn.executescript(TEST_JOB_SCHEMA)
+    # Task 3 extends databases that already contain Task 1's durable job tables.
+    _ensure_columns(conn, "test_requests", {"cancel_requested_at": "TEXT"})
+    _ensure_columns(conn, "test_jobs", {
+        "cancel_requested": "INTEGER NOT NULL DEFAULT 0",
+        "log_received_bytes": "INTEGER NOT NULL DEFAULT 0",
+        "log_stored_bytes": "INTEGER NOT NULL DEFAULT 0",
+        "log_truncated": "INTEGER NOT NULL DEFAULT 0",
+        "log_last_chunk_offset": "INTEGER",
+        "log_last_chunk_length": "INTEGER",
+        "log_last_chunk_sha256": "TEXT",
+    })
+
+
+@contextmanager
+def immediate_tx(conn: sqlite3.Connection):
+    """Take the write lock up front or join a caller's existing write transaction."""
+    if conn.in_transaction:
+        yield conn
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield conn
+    except BaseException as e:
+        # A reported conflict can still require persisting a discovered state
+        # change, such as a diverged issue or an expired job lease.
+        if getattr(e, "commit", False):
+            conn.execute("COMMIT")
+        else:
+            conn.execute("ROLLBACK")
+        raise
+    else:
+        conn.execute("COMMIT")
 
 
 @contextmanager
 def write_tx(path: str):
-    """One request = one connection = one BEGIN IMMEDIATE transaction.
-
-    BEGIN IMMEDIATE takes the write lock up front, so writers in any number of
-    balancer processes serialise and every check-then-write below is race free.
-    An exception rolls back, except one carrying `commit = True` (used to record
-    a divergence and still answer 409).
-    """
+    """One request = one connection = one BEGIN IMMEDIATE transaction."""
     conn = get_connection(path)
     try:
-        conn.execute("BEGIN IMMEDIATE")
-        try:
+        with immediate_tx(conn):
             yield conn
-        except BaseException as e:
-            if getattr(e, "commit", False):
-                conn.execute("COMMIT")
-            else:
-                conn.execute("ROLLBACK")
-            raise
-        else:
-            conn.execute("COMMIT")
     finally:
         conn.close()
