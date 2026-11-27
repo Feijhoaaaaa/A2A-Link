@@ -4,6 +4,7 @@ import os
 import threading
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Callable, Literal
@@ -19,6 +20,7 @@ from balancer.codex_usage import codex_windows
 from balancer.tasklog import read_tail
 from balancer.db import get_connection, init_schema, write_tx
 from balancer.router import ProfileError, choose_agent, resolve_profile
+from balancer.test_jobs_api import TrustBoundaryMiddleware, register_test_job_routes
 
 DEFAULT_AGENTS = ["claude", "codex"]
 STATIC_DIR = Path(__file__).parent / "static"
@@ -280,7 +282,7 @@ def _task_full(row) -> dict:
 
 def create_app(db_path: str, agents: list[str] | None = None, *,
                clock: Callable[[], datetime] | None = None,
-               attempt_ttl_s: int | None = None) -> FastAPI:
+               attempt_ttl_s: int | None = None, test_job_store=None) -> FastAPI:
     read_codex_usage = os.environ.get("A2A_LINK_READ_CODEX_USAGE", "1") != "0"
     agents = agents or DEFAULT_AGENTS
     clock = clock or (lambda: datetime.now(timezone.utc))
@@ -289,15 +291,27 @@ def create_app(db_path: str, agents: list[str] | None = None, *,
     conn = get_connection(db_path)
     init_schema(conn)
     lock = threading.Lock()
-    app = FastAPI(title="A2A_Link balancer")
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        with write_tx(db_path) as recovery_conn:
+            repo.reconcile_expired_test_job_leases(recovery_conn, repo.ts(clock()))
+        yield
+
+    app = FastAPI(title="A2A_Link balancer", lifespan=lifespan)
+    # Only runner routes may be reached from the tailnet; everything else is direct loopback.
+    app.add_middleware(TrustBoundaryMiddleware)
 
     @app.exception_handler(repo.ApiError)
     async def _api_error(request: Request, exc: repo.ApiError):
-        return JSONResponse(exc.body(), status_code=exc.status)
+        # RFC 9110: a 401 names the scheme the client must use (runner/admin bearer tokens).
+        headers = {"WWW-Authenticate": "Bearer"} if exc.status == 401 else None
+        return JSONResponse(exc.body(), status_code=exc.status, headers=headers)
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, exc: RequestValidationError):
-        if request.url.path.startswith(("/issues", "/profiles")):
+        if request.url.path.startswith(("/issues", "/profiles", "/test-snapshots", "/test-requests",
+                                        "/test-jobs", "/test-deliveries", "/runners")):
             return JSONResponse({"error": "validation_error", "detail": "invalid request body",
                                  "errors": json.loads(json.dumps(exc.errors(), default=str))},
                                 status_code=422)
@@ -579,6 +593,9 @@ def create_app(db_path: str, agents: list[str] | None = None, *,
     @app.post("/issues/{issue_id}/close")
     def issues_close(issue_id: str, body: CloseIn):
         return run(lambda c, now, lease: repo.close_issue(c, now, issue_id, body.model_dump()))
+
+    # --- background test jobs: see docs/superpowers/specs/2026-11-27-background-test-jobs-api.md
+    register_test_job_routes(app, db_path, store=test_job_store)
 
     @app.get("/dashboard", response_class=HTMLResponse)
     def dashboard():
