@@ -114,3 +114,61 @@ def test_claude_context_threshold_is_advisory_at_ninety_percent():
     assert parsed["context"]["used_tokens"] == 180
     assert parsed["context"]["threshold_reached"] is True
     assert parsed["context"]["threshold"] == 0.9
+
+
+def test_managed_codex_start_and_continue_inject_only_participant_mcp_context():
+    import json
+    import tomllib
+
+    context = {"issue_id": "i_de6fda66d9", "participant": "codex", "generation": 3,
+               "origin_attempt_id": "a1", "origin_message_id": "m1", "cwd": r"C:\issues\i\codex",
+               "requested_profile": {"model": "gpt-6.2-sol", "effort": "high"},
+               "balancer_url": "http://127.0.0.1:8000", "link_home": r"C:\Users\test\.a2a_link"}
+    adapter = CodexAdapter()
+    start = adapter.start_argv("start", {"model": "gpt-6.2-sol"}, context)
+    resumed = adapter.continue_argv(
+        SessionHandle("codex", "saved", context["cwd"], 3), "continue", None, context)
+    assert "--ignore-user-config" in start and "--ignore-user-config" in resumed
+    for argv in (start, resumed):
+        config = next(value for value in argv if value.startswith("mcp_servers={a2a_link="))
+        assert config.startswith("mcp_servers={a2a_link=")
+        assert "mcp_server.participant_server" in config
+        assert "A2A_LINK_PARTICIPANT_CONTEXT" in config
+        assert "session_id" not in config
+        server = tomllib.loads(config)["mcp_servers"]["a2a_link"]
+        assert server["enabled_tools"] == ["start_tests", "get_test_request"]
+        assert server["default_tools_approval_mode"] == "prompt"
+        assert server["tools"] == {
+            "start_tests": {"approval_mode": "approve"},
+            "get_test_request": {"approval_mode": "approve"},
+        }
+        assert server["enabled"] is True
+        assert "--dangerously-bypass-approvals-and-sandbox" not in argv
+        assert any("workspace-write" in arg for arg in argv)
+
+
+def test_managed_claude_start_and_continue_inject_scoped_mcp_json():
+    import json
+
+    context = {"issue_id": "i_de6fda66d9", "participant": "claude", "generation": 1,
+               "origin_attempt_id": "a2", "origin_message_id": "m2", "cwd": "/issues/i/claude",
+               "requested_profile": {"model": "sonnet", "effort": "medium"},
+               "balancer_url": "http://127.0.0.1:8000", "link_home": "/tmp/a2a-link"}
+    adapter = ClaudeAdapter()
+    start = adapter.start_argv("start", None, context)
+    resumed = adapter.continue_argv(
+        SessionHandle("claude", "saved", context["cwd"], 1), "continue", None, context)
+    for argv in (start, resumed):
+        assert "--strict-mcp-config" in argv
+        allowed_index = argv.index("--allowedTools")
+        assert argv[allowed_index + 1:allowed_index + 3] == [
+            "mcp__a2a_link__start_tests", "mcp__a2a_link__get_test_request"]
+        assert "--permission-mode" in argv
+        assert argv[argv.index("--permission-mode") + 1] == "acceptEdits"
+        raw = argv[argv.index("--mcp-config") + 1]
+        config = json.loads(raw)
+        server = config["mcpServers"]["a2a_link"]
+        assert server["args"] == ["-m", "mcp_server.participant_server"]
+        injected = json.loads(server["env"]["A2A_LINK_PARTICIPANT_CONTEXT"])
+        assert injected["origin_attempt_id"] == context["origin_attempt_id"]
+        assert injected["requested_profile"] == context["requested_profile"]
