@@ -45,4 +45,4 @@ If the MCP entry points to another clone or virtual environment, update that che
 - Persistent A2A issue collaboration with managed Codex CLI and Claude Code sessions.
 - Local balancer dashboard and durable background test jobs that resume the originating managed chat when results arrive.
 - Configurable runner-local test profiles, Windows/Linux runner support, and automatic worker-count substitution for `pytest-xdist` profiles.
-- Existing v1 delegation tools and data remain available. Linux runner behavior is implemented but has not yet been verified on a real Linux host; see the [verification record](docs/specs/2026-11-27-background-test-jobs-verification.md).
+- Existing v1 delegation tools and data remain available. Linux runner behavior is implemented but has not yet been verified on a real Linux host.

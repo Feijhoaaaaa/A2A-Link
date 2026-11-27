@@ -99,7 +99,7 @@ If you already use the Vercel CLI, `vercel dev --local` can serve `balancer/stat
 
 ## Background test runners
 
-An agent can ask for its tests to run in the background against an exact snapshot of its working tree, on one or more target OSes. The balancer queues one job per target; a runner claims a job whose target labels it has, downloads and verifies the snapshot, runs the test profile, streams a bounded log back, and posts one result. The API contract is [docs/superpowers/specs/2026-11-27-background-test-jobs-api.md](docs/superpowers/specs/2026-11-27-background-test-jobs-api.md); test profiles are described in [config/test-profiles.example.json](config/test-profiles.example.json).
+An agent can ask for its tests to run in the background against an exact snapshot of its working tree, on one or more target OSes. The balancer queues one job per target; a runner claims a job whose target labels it has, downloads and verifies the snapshot, runs the test profile, streams a bounded log back, and posts one result. Test profiles are described in [config/test-profiles.example.json](config/test-profiles.example.json).
 
 There are two ways to run a runner:
 
@@ -205,7 +205,7 @@ tailscale serve status
 - A profile may request `parallelism` and a `memory_limit_mb`. The dashboard shows these as requested while a job runs, and shows the runner's reported `resources` (including `memory_limit_enforced` exactly as reported) after the result. Memory caps are enforced for the whole process tree on Windows (Job Objects); a Linux runner rejects a capped job before downloading it.
 - Leases default to 60 seconds. If a runner stops renewing its lease, the job becomes **lost**: the balancer keeps the runner ownership, the log evidence and the held runner slot, and never marks the job successful or retries it. Check the runner machine and resolve it manually.
 - Logs are bounded to 8 MiB per job (the beginning is kept); results carry stdout/stderr tails of up to 64 KiB each. There is no automatic cleanup of logs or snapshots yet.
-- Linux execution has not been verified on a real Linux host in this release; see [docs/specs/2026-11-27-background-test-jobs-verification.md](docs/specs/2026-11-27-background-test-jobs-verification.md).
+- Linux runner code is included, but has not yet been verified on a real Linux host in this release.
 
 ## Local terminal executor
 
@@ -321,11 +321,11 @@ Other details:
 
 Set these variables in the MCP server's environment (`-e` / `--env` when registering it).
 
-The end-to-end runbook with observed results is in [docs/specs/2026-11-22-manual-verification.md](docs/specs/2026-11-22-manual-verification.md).
+The end-to-end runbook is in [docs/specs/2026-11-22-manual-verification.md](docs/specs/2026-11-22-manual-verification.md).
 
 ## Issues (v2): Link-managed collaboration
 
-An **issue** is a goal with acceptance criteria that two Link-managed CLI participants (`claude` and `codex`) work on in their own git worktrees. The contract between the balancer and the MCP/adapter side is [docs/specs/2026-11-24-issue-mvp-api.md](docs/specs/2026-11-24-issue-mvp-api.md); this section describes what the balancer does.
+An **issue** is a goal with acceptance criteria that two Link-managed CLI participants (`claude` and `codex`) work on in their own git worktrees. This section describes how the balancer and MCP/adapter side coordinate those participants.
 
 - **The chat that opens an issue is only the coordinator**, whether it is a Claude chat (`opened_from: "claude"`) or a Codex chat (`opened_from: "codex"`). Link starts a **fresh** CLI conversation for each participant in its assigned worktree and resumes it later from the persisted session id. An already-open chat is never attached; the API has no field for that and rejects unknown fields.
 - **The balancer only stores state.** It never runs a CLI, never runs git and never creates directories. Worktree paths (`<A2A_LINK_HOME>/worktrees/<issue_id>-<key>`, branch `a2a/issue-<issue_id>/<key>`) are returned as strings for the adapter side to create.
