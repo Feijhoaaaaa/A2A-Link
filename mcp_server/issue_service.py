@@ -75,6 +75,27 @@ class IssueService:
     def snapshot(self, issue_id: str) -> dict[str, Any]:
         return self._request("GET", f"/issues/{issue_id}")
 
+    def upload_test_snapshot(self, path: str | Path, sha256: str) -> dict[str, Any]:
+        with Path(path).open("rb") as archive:
+            return self._request("PUT", f"/test-snapshots/{sha256}", content=archive)
+
+    def create_test_request(self, **body: Any) -> dict[str, Any]:
+        return self._request("POST", "/test-requests", json=body)
+
+    def get_test_request(self, request_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/test-requests/{request_id}")
+
+    def test_deliveries(self, *, wait_s: float = 0, limit: int = 10) -> dict[str, Any]:
+        """Long-poll the durable outbox; the returned reservations are immutable."""
+        if (isinstance(wait_s, bool) or not isinstance(wait_s, (int, float))
+                or not 0 <= wait_s <= 55):
+            raise ValueError("wait_s must be between 0 and 55")
+        if type(limit) is not int or not 1 <= limit <= 50:
+            raise ValueError("limit must be between 1 and 50")
+        return self._request("GET", "/test-deliveries", params={
+            "wait_s": wait_s, "limit": limit,
+        }, timeout=wait_s + 10)
+
     def reserve_message(self, issue_id: str, participant: str, **body: Any) -> dict[str, Any]:
         return self._request("POST", f"/issues/{issue_id}/participants/{participant}/messages", json=body)
 

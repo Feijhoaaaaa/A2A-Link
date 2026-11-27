@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import threading
@@ -20,12 +21,22 @@ from mcp_server.supervisor import (SupervisorRuntime, process_scope_empty,
                                    wait_for_process_scope)
 from mcp_server.worktree import worktree_base
 
+log = logging.getLogger("a2a_link.issue_runner")
+
 
 @dataclass
 class TurnJob:
     attempt_id: str
     done: threading.Event = field(default_factory=threading.Event)
     result: dict[str, Any] | None = None
+
+
+def _resume_session_error(expected: str | None, observed: str | None) -> str | None:
+    if not observed:
+        return "session_id_missing"
+    if not expected or observed != expected:
+        return "session_id_mismatch"
+    return None
 
 
 class IssueRunner:
@@ -38,49 +49,85 @@ class IssueRunner:
 
     def send(self, issue_id: str, participant: str, prompt: str, task_type: str,
              user_override: dict[str, Any] | None = None, message_id: str | None = None,
-             wait_s: float = 0) -> dict[str, Any]:
+             wait_s: float = 0, *,
+             _reservation: dict[str, Any] | None = None) -> dict[str, Any]:
         self.recover_after_restart()
         if participant not in self.adapters:
             raise ValueError("participant must be claude or codex")
-        if not prompt.strip():
+        if _reservation is None and not prompt.strip():
             raise ValueError("prompt must not be empty")
+        if _reservation is not None:
+            required = {"message_id", "kind", "round_id", "generation", "requested_profile",
+                        "profile_source", "prompt"}
+            if set(_reservation) != required or _reservation.get("kind") != "continue":
+                raise ValueError("invalid frozen test delivery reservation")
         snapshot = self.service.snapshot(issue_id)
         person = snapshot["participants"][participant]
         generation = person["generation"]
         handle_data = person.get("handle")
-        kind = "continue" if handle_data else "start"
-        effective_prompt = (compose_generation_handoff(snapshot, participant, generation, prompt)
-                            if kind == "start" else prompt)
+        if _reservation is None:
+            kind = "continue" if handle_data else "start"
+            effective_prompt = (compose_generation_handoff(snapshot, participant, generation, prompt)
+                                if kind == "start" else prompt)
+            profile = self.service.resolve_profile(participant, task_type, user_override)
+            msg_id = message_id or str(uuid.uuid4())
+            round_id = snapshot["round"]["id"]
+            frozen = {"message_id": msg_id, "kind": kind, "round_id": round_id,
+                      "generation": generation, "requested_profile": profile["requested_profile"],
+                      "profile_source": profile["source"], "prompt": effective_prompt}
+        else:
+            if generation != _reservation["generation"] or not handle_data:
+                return {"status": "undeliverable", "execute": False,
+                        "message_id": _reservation["message_id"]}
+            if handle_data.get("generation", generation) != generation:
+                return {"status": "undeliverable", "execute": False,
+                        "message_id": _reservation["message_id"]}
+            kind = _reservation["kind"]
+            effective_prompt = _reservation["prompt"]
+            profile = {"requested_profile": _reservation["requested_profile"],
+                       "source": _reservation["profile_source"]}
+            msg_id = _reservation["message_id"]
+            round_id = _reservation["round_id"]
+            frozen = _reservation
         cwd = handle_data["cwd"] if handle_data else str(worktree_base() / f"{issue_id}-{participant}")
         if not os.path.isdir(cwd):
             raise FileNotFoundError(f"managed participant worktree does not exist: {cwd}")
-        profile = self.service.resolve_profile(participant, task_type, user_override)
-        msg_id = message_id or str(uuid.uuid4())
-        round_id = snapshot["round"]["id"]
         if not self.runtime.acquire():
             raise RuntimeError("another supervisor action is in progress for this install")
         try:
-            reservation = self.service.reserve_message(
-                issue_id, participant, message_id=msg_id, kind=kind, round_id=round_id,
-                generation=generation, requested_profile=profile["requested_profile"],
-                profile_source=profile["source"], owner=self.runtime.owner, prompt=effective_prompt,
-            )
+            reservation = self.service.reserve_message(issue_id, participant, **frozen,
+                                                       owner=self.runtime.owner)
             attempt = reservation["attempt"]
             if not reservation.get("execute"):
                 return {"status": reservation.get("state", "active"), "execute": False,
                         "message_id": msg_id, "attempt_id": attempt["attempt_id"]}
             adapter = self.adapters[participant]
+            participant_context = {
+                "issue_id": issue_id,
+                "participant": participant,
+                "generation": generation,
+                "origin_attempt_id": attempt["attempt_id"],
+                "origin_message_id": msg_id,
+                "cwd": str(Path(cwd).resolve()),
+                "requested_profile": profile["requested_profile"],
+                "balancer_url": getattr(self.service, "base_url", "http://127.0.0.1:8000"),
+                "link_home": str(self.runtime.directory.parent),
+                "worktree_root": str(worktree_base().resolve()),
+            }
             if kind == "start":
-                argv = adapter.start_argv(effective_prompt, profile["requested_profile"])
+                argv = adapter.start_argv(effective_prompt, profile["requested_profile"],
+                                          participant_context)
             else:
                 handle = SessionHandle(adapter_type=handle_data["adapter_type"],
                                        session_id=handle_data["session_id"], cwd=handle_data["cwd"],
                                        generation=handle_data["generation"])
-                argv = adapter.continue_argv(handle, effective_prompt, profile["requested_profile"])
+                argv = adapter.continue_argv(handle, effective_prompt, profile["requested_profile"],
+                                             participant_context)
             resolved_argv, cli_error = build_argv(argv)
             if resolved_argv is None:
                 self.runtime.journal.append("spawn_failed", attempt_id=attempt["attempt_id"], error=cli_error)
                 self._never_started(issue_id, attempt["attempt_id"])
+                self._report_spawn_failure(issue_id, attempt["attempt_id"], cli_error)
                 return {"status": "terminated", "message_id": msg_id,
                         "attempt_id": attempt["attempt_id"], "error": cli_error}
             try:
@@ -100,13 +147,21 @@ class IssueRunner:
                     return {"status": "unresolved", "message_id": msg_id,
                             "attempt_id": attempt["attempt_id"], "error": str(exc)}
                 self._never_started(issue_id, attempt["attempt_id"])
+                self._report_spawn_failure(issue_id, attempt["attempt_id"], str(exc))
                 return {"status": "terminated", "message_id": msg_id,
                         "attempt_id": attempt["attempt_id"], "error": str(exc)}
-            self._retry_api(lambda: self.service.report_process(
-                issue_id, attempt["attempt_id"], owner=self.runtime.owner,
-                process_identity=identity,
-            ))
-            self.runtime.journal.append("process_reported", attempt_id=attempt["attempt_id"])
+            try:
+                self._retry_api(lambda: self.service.report_process(
+                    issue_id, attempt["attempt_id"], owner=self.runtime.owner,
+                    process_identity=identity,
+                ))
+                self.runtime.journal.append("process_reported", attempt_id=attempt["attempt_id"])
+            except Exception:
+                # The child is already supervised. Keep its watcher alive across a
+                # balancer restart; termination/result calls retry against the durable API.
+                self.runtime.journal.append("process_report_pending", attempt_id=attempt["attempt_id"])
+                log.exception("process identity report is pending for attempt %s",
+                              attempt["attempt_id"])
         finally:
             self.runtime.release()
 
@@ -116,7 +171,8 @@ class IssueRunner:
         worker = threading.Thread(
             target=self._finish_turn,
             args=(issue_id, participant, kind, generation, attempt["attempt_id"], msg_id,
-                  profile, cwd, proc, identity, job, keeper, job_state),
+                  profile, cwd, proc, identity, job, keeper, job_state,
+                  handle_data.get("session_id") if kind == "continue" else None),
             name=f"a2a-issue-{attempt['attempt_id']}", daemon=True,
         )
         worker.start()
@@ -124,6 +180,89 @@ class IssueRunner:
             return job_state.result or {"status": "failed", "attempt_id": attempt["attempt_id"]}
         return {"status": "in_progress", "execute": True, "message_id": msg_id,
                 "attempt_id": attempt["attempt_id"]}
+
+    def send_reserved(self, issue_id: str, participant: str,
+                      reservation: dict[str, Any], wait_s: float = 0) -> dict[str, Any]:
+        """Replay the balancer's frozen delivery as an idempotent issue message."""
+        return self.send(issue_id, participant, "", "", wait_s=wait_s,
+                         _reservation=reservation)
+
+    def run_dispatcher_once(self, *, wait_s: float = 0, limit: int = 10) -> int:
+        """Fetch ready deliveries once; DB message reservation makes concurrent pollers safe."""
+        payload = self.service.test_deliveries(wait_s=wait_s, limit=limit)
+        deliveries = payload.get("deliveries")
+        if not isinstance(deliveries, list):
+            raise ValueError("delivery poll returned an invalid response")
+        for item in deliveries:
+            if not isinstance(item, dict) or not isinstance(item.get("reservation"), dict):
+                log.error("balancer returned a malformed test delivery")
+                continue
+            try:
+                self.send_reserved(item["issue_id"], item["participant"], item["reservation"])
+            except IssueAPIError as exc:
+                # Busy/stale races are resolved by the next durable feed read. They are
+                # intentionally not converted into a new message or acknowledged here.
+                log.info("test delivery %s remains pending after API conflict: %s",
+                         item.get("request_id", "unknown"), exc.status_code)
+            except Exception:
+                # A replay is safe because the frozen message_id is reserved in SQLite.
+                log.exception("test delivery %s remains pending after dispatch error",
+                              item.get("request_id", "unknown"))
+        return len(deliveries)
+
+    def dispatch_once(self) -> int:
+        """Non-blocking alias used by tests and explicit coordinator hooks."""
+        return self.run_dispatcher_once(wait_s=0)
+
+    def start_dispatcher(self, *, wait_s: float = 20, limit: int = 10) -> bool:
+        """Start one daemon consumer; repeated starts on the same runner are idempotent."""
+        if not 0 <= wait_s <= 55 or type(limit) is not int or not 1 <= limit <= 50:
+            raise ValueError("invalid delivery poll wait or limit")
+        with self._jobs_lock:
+            thread = getattr(self, "_dispatcher_thread", None)
+            if thread is not None and thread.is_alive():
+                return False
+            stop = threading.Event()
+            self._dispatcher_stop = stop
+            thread = threading.Thread(target=self._dispatch_loop, args=(stop, wait_s, limit),
+                                      name="a2a-test-result-dispatcher", daemon=True)
+            self._dispatcher_thread = thread
+            thread.start()
+            return True
+
+    def stop_dispatcher(self, *, timeout: float = 25) -> bool:
+        """Signal and join the long-poll consumer; safe to call repeatedly."""
+        with self._jobs_lock:
+            thread = getattr(self, "_dispatcher_thread", None)
+            stop = getattr(self, "_dispatcher_stop", None)
+            if thread is None or stop is None or not thread.is_alive():
+                return False
+            stop.set()
+        thread.join(timeout=max(0, timeout))
+        return not thread.is_alive()
+
+    def _dispatch_loop(self, stop: threading.Event, wait_s: float, limit: int) -> None:
+        delay = 0.5
+        while not stop.is_set():
+            try:
+                self.run_dispatcher_once(wait_s=wait_s, limit=limit)
+                delay = 0.5
+            except Exception:
+                log.exception("test result dispatcher poll failed; retrying")
+                delay = min(delay * 2, 10)
+            if stop.wait(delay):
+                break
+
+    def _report_spawn_failure(self, issue_id: str, attempt_id: str, error: str) -> None:
+        try:
+            self._retry_api(lambda: self.service.result(
+                issue_id, attempt_id, owner=self.runtime.owner, status="failed", text="",
+                exit_code=1, confirmed_profile={"model": None, "effort": None},
+                context=None, limits=None, error=error,
+            ))
+            self.runtime.journal.append("result_posted", attempt_id=attempt_id)
+        except Exception:
+            log.exception("could not persist failed CLI start for attempt %s", attempt_id)
 
     def recover_after_restart(self) -> list[dict[str, Any]]:
         """Reattach journaled attempts after MCP restart and fail closed on uncertain scopes."""
@@ -207,6 +346,32 @@ class IssueRunner:
                 ))
                 self.runtime.journal.append("termination_posted", attempt_id=attempt_id,
                                             method=method)
+                if intent.get("kind") == "continue":
+                    output_path = self.runtime.directory / "attempts" / attempt_id / "stdout.jsonl"
+                    events = []
+                    if output_path.exists():
+                        for line in output_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                            try:
+                                events.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                continue
+                    observed = (CodexAdapter.session_id_from_event(
+                        next((e for e in events if e.get("type") == "thread.started"), {}))
+                        if participant == "codex" else
+                        ClaudeAdapter.session_id_from_event(
+                            next((e for e in events if e.get("type") == "system"
+                                  and e.get("subtype") == "init"), {})))
+                    saved = (snapshot.get("participants", {}).get(participant, {}).get("handle") or {})
+                    session_error = _resume_session_error(saved.get("session_id"), observed)
+                    error = session_error or "resumed_turn_interrupted_by_supervisor_restart"
+                    self._retry_api(lambda: self.service.result(
+                        issue_id, attempt_id, owner=self.runtime.owner, status="failed",
+                        text=self._extract_text(events), exit_code=1,
+                        confirmed_profile={"model": None, "effort": None}, context=None,
+                        limits=None, error=error,
+                    ))
+                    self.runtime.journal.append("result_posted", attempt_id=attempt_id,
+                                                error=error)
                 if intent.get("kind") == "start" and not session:
                     self._retry_api(lambda: self.service.result(
                         issue_id, attempt_id, owner=self.runtime.owner, status="failed",
@@ -446,7 +611,8 @@ class IssueRunner:
 
     def _finish_turn(self, issue_id: str, participant: str, kind: str, generation: int,
                      attempt_id: str, message_id: str, profile: dict[str, Any], cwd: str, proc,
-                     identity: dict[str, Any], job, keeper, state: TurnJob) -> None:
+                     identity: dict[str, Any], job, keeper, state: TurnJob,
+                     expected_session_id: str | None = None) -> None:
         deadline = time.monotonic() + int(os.environ.get("A2A_LINK_ISSUE_TIMEOUT_S", "3600"))
         heartbeat_deadline = 0.0
         handle_saved = kind != "start"
@@ -536,6 +702,11 @@ class IssueRunner:
                 error = self._extract_error(events)
                 text = self._extract_text(events)
             failed = timed_out or proc.returncode != 0 or (kind == "start" and not handle_saved)
+            resume_error = (_resume_session_error(expected_session_id, parsed.get("session_id"))
+                            if kind == "continue" else None)
+            if resume_error:
+                failed = True
+                error = resume_error
             if kind == "start" and not handle_saved:
                 error = error or "session_not_captured"
             if timed_out:
